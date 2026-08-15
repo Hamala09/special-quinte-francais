@@ -429,6 +429,23 @@ textarea {
   padding: 15px;
   border-radius: 8px;
 }
+
+.locked {
+  background: #f3f4f6;
+  padding: 25px;
+  border-radius: 12px;
+  text-align: center;
+  margin-top: 20px;
+}
+
+.locked h3 {
+  margin-top: 0;
+}
+
+.lock-icon {
+  font-size: 40px;
+  margin-bottom: 10px;
+}
 </style>
 </head>
 
@@ -481,6 +498,7 @@ ${body}
 
 /* =========================
    ACCUEIL
+   NUMÉROS CACHÉS PUBLIQUEMENT
 ========================= */
 
 app.get("/", (req, res) => {
@@ -527,33 +545,22 @@ Voir les abonnements
 
 <h2>🔒 Pronostic du jour</h2>
 
-<div class="picks">
+<div class="locked">
 
-<b>
-BASES
-<span>${safe(t.bases)}</span>
-</b>
+<div class="lock-icon">🔐</div>
 
-<b>
-SECONDES CHANCES
-<span>${safe(t.second_chances)}</span>
-</b>
+<h3>Pronostic réservé aux membres VIP</h3>
 
-<b>
-OUTSIDERS
-<span>${safe(t.outsiders)}</span>
-</b>
+<p>
+Les numéros et la sélection complète du Quinté
+sont protégés et accessibles uniquement aux abonnés VIP.
+</p>
 
-<b>
-REMPLAÇANT
-<span>${safe(t.replacement || "-")}</span>
-</b>
+<a class="btn" href="/abonnement">
+👑 Accéder au VIP
+</a>
 
 </div>
-
-<p class="notice">
-Le pronostic complet est réservé aux abonnés VIP.
-</p>
 
 </div>
 
