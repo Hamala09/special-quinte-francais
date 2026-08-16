@@ -32,6 +32,7 @@ const SESSION_SECRET =
 const db = new Database("data.db");
 
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
 
 /* =========================================================
    TABLES
@@ -78,19 +79,81 @@ CREATE TABLE IF NOT EXISTS tips (
 `);
 
 /* =========================================================
+   MISE À JOUR AUTOMATIQUE DE LA TABLE TIPS
+   AJOUT DES NOUVELLES COLONNES
+========================================================= */
+
+function addColumnIfMissing(table, column, definition) {
+  const columns = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all();
+
+  const exists = columns.some(
+    col => col.name === column
+  );
+
+  if (!exists) {
+    db.exec(
+      `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`
+    );
+
+    console.log(
+      `Colonne ${column} ajoutée à la table ${table}.`
+    );
+  }
+}
+
+/*
+  Ces colonnes sont ajoutées automatiquement
+  même si data.db existe déjà.
+*/
+
+addColumnIfMissing(
+  "tips",
+  "tierce",
+  "TEXT DEFAULT ''"
+);
+
+addColumnIfMissing(
+  "tips",
+  "quarte",
+  "TEXT DEFAULT ''"
+);
+
+addColumnIfMissing(
+  "tips",
+  "quinte",
+  "TEXT DEFAULT ''"
+);
+
+/* =========================================================
    CRÉATION / MISE À JOUR ADMIN
 ========================================================= */
 
-const adminHash = bcrypt.hashSync(ADMIN_PASSWORD, 12);
+const adminHash =
+  bcrypt.hashSync(
+    ADMIN_PASSWORD,
+    12
+  );
 
-const existingAdmin = db
-  .prepare("SELECT id FROM users WHERE email = ?")
-  .get(ADMIN_EMAIL);
+const existingAdmin =
+  db
+    .prepare(
+      "SELECT id FROM users WHERE email = ?"
+    )
+    .get(ADMIN_EMAIL);
 
 if (!existingAdmin) {
+
   db.prepare(`
     INSERT INTO users
-    (name, email, phone, password_hash, role)
+    (
+      name,
+      email,
+      phone,
+      password_hash,
+      role
+    )
     VALUES (?, ?, ?, ?, ?)
   `).run(
     "Administrateur",
@@ -100,15 +163,26 @@ if (!existingAdmin) {
     "admin"
   );
 
-  console.log("Compte administrateur français créé.");
+  console.log(
+    "Compte administrateur français créé."
+  );
+
 } else {
+
   db.prepare(`
     UPDATE users
-    SET password_hash = ?, role = 'admin'
+    SET
+      password_hash = ?,
+      role = 'admin'
     WHERE email = ?
-  `).run(adminHash, ADMIN_EMAIL);
+  `).run(
+    adminHash,
+    ADMIN_EMAIL
+  );
 
-  console.log("Compte administrateur français vérifié.");
+  console.log(
+    "Compte administrateur français vérifié."
+  );
 }
 
 /* =========================================================
@@ -116,11 +190,15 @@ if (!existingAdmin) {
    UNIQUEMENT SI LA BASE EST VIDE
 ========================================================= */
 
-const existingTip = db
-  .prepare("SELECT id FROM tips LIMIT 1")
-  .get();
+const existingTip =
+  db
+    .prepare(
+      "SELECT id FROM tips LIMIT 1"
+    )
+    .get();
 
 if (!existingTip) {
+
   db.prepare(`
     INSERT INTO tips
     (
@@ -134,9 +212,12 @@ if (!existingTip) {
       second_chances,
       outsiders,
       replacement,
-      notes
+      notes,
+      tierce,
+      quarte,
+      quinte
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "2026-08-15",
     "QUINTÉ DU JOUR — RÉUNION 1",
@@ -148,18 +229,30 @@ if (!existingTip) {
     "3 – 7 – 10",
     "2 – 11 – 14",
     "6",
-    "Pronostic de démonstration à remplacer par votre sélection du jour."
+    "Pronostic de démonstration à remplacer par votre sélection du jour.",
+    "5 – 8 – 12 – 3 – 7 – 10",
+    "5 – 8 – 12 – 3 – 7 – 10 – 2",
+    "5 – 8 – 12 – 3 – 7 – 10 – 2 – 11"
   );
 
-  console.log("Pronostic de démonstration créé.");
+  console.log(
+    "Pronostic de démonstration créé."
+  );
 }
 
 /* =========================================================
    MIDDLEWARE
 ========================================================= */
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(
+  express.urlencoded({
+    extended: true
+  })
+);
+
+app.use(
+  express.json()
+);
 
 app.use(
   session({
@@ -169,14 +262,18 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      secure:
+        process.env.NODE_ENV === "production",
+      maxAge:
+        7 * 24 * 60 * 60 * 1000
     }
   })
 );
 
 app.use(
-  express.static(path.join(__dirname, "public"))
+  express.static(
+    path.join(__dirname, "public")
+  )
 );
 
 /* =========================================================
@@ -184,29 +281,45 @@ app.use(
 ========================================================= */
 
 function auth(req, res, next) {
+
   if (!req.session.userId) {
-    return res.redirect("/connexion");
+    return res.redirect(
+      "/connexion"
+    );
   }
 
   next();
 }
 
 function admin(req, res, next) {
+
   if (
     !req.session.userId ||
     req.session.role !== "admin"
   ) {
+
     return res.status(403).send(
       page(
         req,
         "Accès refusé",
         `
         <div class="formbox">
-          <h1>🔒 Accès refusé</h1>
-          <p>Accès administrateur requis.</p>
-          <a class="btn" href="/connexion">
+
+          <h1>
+            🔒 Accès refusé
+          </h1>
+
+          <p>
+            Accès administrateur requis.
+          </p>
+
+          <a
+            class="btn"
+            href="/connexion"
+          >
             Se connecter
           </a>
+
         </div>
         `
       )
@@ -221,61 +334,110 @@ function admin(req, res, next) {
 ========================================================= */
 
 function safe(value) {
+
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#039;"
+    );
 }
 
 function isVip(user) {
+
   return (
     user &&
     user.vip_until &&
-    new Date(user.vip_until) > new Date()
+    new Date(user.vip_until) >
+      new Date()
   );
 }
 
 function formatDate(dateString) {
-  if (!dateString) return "";
 
-  const date = new Date(
-    dateString + "T00:00:00"
+  if (!dateString) {
+    return "";
+  }
+
+  const date =
+    new Date(
+      dateString +
+      "T00:00:00"
+    );
+
+  return date.toLocaleDateString(
+    "fr-FR",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    }
   );
-
-  return date.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric"
-  });
 }
 
 function todayString() {
-  const now = new Date();
 
-  const year = now.getFullYear();
-  const month = String(
-    now.getMonth() + 1
-  ).padStart(2, "0");
+  const now =
+    new Date();
 
-  const day = String(
-    now.getDate()
-  ).padStart(2, "0");
+  const year =
+    now.getFullYear();
 
-  return `${year}-${month}-${day}`;
+  const month =
+    String(
+      now.getMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  const day =
+    String(
+      now.getDate()
+    ).padStart(
+      2,
+      "0"
+    );
+
+  return (
+    `${year}-${month}-${day}`
+  );
 }
 
 /* =========================================================
    TEMPLATE PRINCIPAL
 ========================================================= */
 
-function page(req, title, body) {
-  const logged = !!req.session.userId;
-  const isAdmin = req.session.role === "admin";
+function page(
+  req,
+  title,
+  body
+) {
+
+  const logged =
+    !!req.session.userId;
+
+  const isAdmin =
+    req.session.role === "admin";
 
   return `
 <!doctype html>
+
 <html lang="fr">
 
 <head>
@@ -288,7 +450,9 @@ function page(req, title, body) {
 >
 
 <title>
-${safe(title)} — Spécial Quinté Français
+${safe(title)}
+—
+Spécial Quinté Français
 </title>
 
 <style>
@@ -380,7 +544,10 @@ footer {
 .grid {
   display: grid;
   grid-template-columns:
-    repeat(auto-fit,minmax(280px,1fr));
+    repeat(
+      auto-fit,
+      minmax(280px, 1fr)
+    );
   gap: 20px;
 }
 
@@ -398,7 +565,10 @@ footer {
 .picks {
   display: grid;
   grid-template-columns:
-    repeat(auto-fit,minmax(180px,1fr));
+    repeat(
+      auto-fit,
+      minmax(180px, 1fr)
+    );
   gap: 12px;
   margin: 20px 0;
 }
@@ -414,6 +584,26 @@ footer {
   display: block;
   font-size: 21px;
   margin-top: 8px;
+}
+
+.selection-card {
+  background: white;
+  border-radius: 12px;
+  padding: 18px;
+  margin: 12px 0;
+  box-shadow:
+    0 3px 12px rgba(0,0,0,.07);
+  text-align: center;
+}
+
+.selection-card h3 {
+  margin: 0 0 10px;
+}
+
+.selection-card .numbers {
+  font-size: 21px;
+  font-weight: bold;
+  letter-spacing: .5px;
 }
 
 .notice {
@@ -503,10 +693,6 @@ textarea {
   margin-bottom: 10px;
 }
 
-/* ================================
-   ARCHIVES
-================================ */
-
 .archive-card {
   background: white;
   padding: 22px;
@@ -537,7 +723,10 @@ textarea {
 .archive-picks {
   display: grid;
   grid-template-columns:
-    repeat(auto-fit,minmax(150px,1fr));
+    repeat(
+      auto-fit,
+      minmax(150px, 1fr)
+    );
   gap: 10px;
   margin-top: 15px;
 }
@@ -573,10 +762,6 @@ textarea {
   border-radius: 14px;
   margin-bottom: 20px;
 }
-
-/* ================================
-   MOBILE
-================================ */
 
 @media(max-width:600px) {
 
@@ -616,9 +801,16 @@ textarea {
 
 <header>
 
-<a class="logo" href="/">
+<a
+  class="logo"
+  href="/"
+>
 ♞ SPÉCIAL QUINTÉ
-<small>FRANÇAIS</small>
+
+<small>
+FRANÇAIS
+</small>
+
 </a>
 
 <nav>
@@ -703,36 +895,46 @@ ${body}
    ACCUEIL
 ========================================================= */
 
-app.get("/", (req, res) => {
+app.get(
+  "/",
+  (req, res) => {
 
-  const t = db
-    .prepare(`
-      SELECT *
-      FROM tips
-      ORDER BY race_date DESC, id DESC
-      LIMIT 1
-    `)
-    .get();
+    const t =
+      db
+        .prepare(`
+          SELECT *
+          FROM tips
+          ORDER BY
+            race_date DESC,
+            id DESC
+          LIMIT 1
+        `)
+        .get();
 
-  if (!t) {
-    return res.send(
+    if (!t) {
+
+      return res.send(
+        page(
+          req,
+          "Accueil",
+          `
+          <div class="card">
+
+            <h1>
+              Aucun pronostic disponible.
+            </h1>
+
+          </div>
+          `
+        )
+      );
+    }
+
+    res.send(
       page(
         req,
         "Accueil",
         `
-        <div class="card">
-          <h1>Aucun pronostic disponible.</h1>
-        </div>
-        `
-      )
-    );
-  }
-
-  res.send(
-    page(
-      req,
-      "Accueil",
-      `
 
 <section class="hero">
 
@@ -767,8 +969,8 @@ ${safe(t.distance)}
 </div>
 
 <a
-class="btn"
-href="/abonnement"
+  class="btn"
+  href="/abonnement"
 >
 Voir les abonnements
 </a>
@@ -794,13 +996,14 @@ Pronostic réservé aux membres VIP
 </h3>
 
 <p>
-Les numéros et la sélection complète du Quinté
-sont protégés et accessibles uniquement aux abonnés VIP.
+Les numéros et la sélection complète
+du Quinté sont protégés et accessibles
+uniquement aux abonnés VIP.
 </p>
 
 <a
-class="btn"
-href="/abonnement"
+  class="btn"
+  href="/abonnement"
 >
 👑 Accéder au VIP
 </a>
@@ -817,13 +1020,12 @@ href="/abonnement"
 
 <p>
 Retrouvez les anciens pronostics,
-avec leurs Bases, Secondes chances,
-Outsiders et Remplaçants.
+avec leurs différentes sélections.
 </p>
 
 <a
-class="btn"
-href="/archives"
+  class="btn"
+  href="/archives"
 >
 Voir les archives
 </a>
@@ -847,8 +1049,8 @@ Voir les archives
 </p>
 
 <a
-class="btn"
-href="/abonnement"
+  class="btn"
+  href="/abonnement"
 >
 S'abonner
 </a>
@@ -858,28 +1060,35 @@ S'abonner
 </div>
 
 `
-    )
-  );
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
-   ARCHIVES — LISTE PUBLIQUE
+   ARCHIVES
 ========================================================= */
 
-app.get("/archives", (req, res) => {
+app.get(
+  "/archives",
+  (req, res) => {
 
-  const today = todayString();
+    const today =
+      todayString();
 
-  const archives = db
-    .prepare(`
-      SELECT *
-      FROM tips
-      WHERE race_date < ?
-      ORDER BY race_date DESC, id DESC
-    `)
-    .all(today);
+    const archives =
+      db
+        .prepare(`
+          SELECT *
+          FROM tips
+          WHERE race_date < ?
+          ORDER BY
+            race_date DESC,
+            id DESC
+        `)
+        .all(today);
 
-  let content = `
+    let content = `
 
 <div class="archive-header">
 
@@ -901,29 +1110,32 @@ restent consultables par les visiteurs.
 
 `;
 
-  if (!archives.length) {
+    if (!archives.length) {
 
-    content += `
-    <div class="card">
+      content += `
 
-      <h2>
-      Aucune archive pour le moment
-      </h2>
+      <div class="card">
 
-      <p>
-      Les anciens pronostics apparaîtront
-      automatiquement ici après leur date de course.
-      </p>
+        <h2>
+        Aucune archive pour le moment
+        </h2>
 
-    </div>
-    `;
+        <p>
+        Les anciens pronostics apparaîtront
+        automatiquement ici après leur date
+        de course.
+        </p>
 
-  } else {
+      </div>
 
-    content += archives
-      .map(t => {
+      `;
 
-        return `
+    } else {
+
+      content += archives
+        .map(t => {
+
+          return `
 
 <div class="archive-card">
 
@@ -947,13 +1159,16 @@ ${safe(t.title)}
 <div class="archive-info">
 
 🏇
-<b>${safe(t.course)}</b>
+<b>
+${safe(t.course)}
+</b>
 
 •
 ${safe(t.distance)}
 
 •
-${safe(t.runners)} partants
+${safe(t.runners)}
+partants
 
 </div>
 
@@ -1007,16 +1222,56 @@ ${safe(t.replacement || "-")}
 
 </div>
 
+<div class="archive-pick">
+
+<strong>
+🏇 TIERCÉ — 6 CHEVAUX
+</strong>
+
+<span>
+${safe(t.tierce || "-")}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+🏇 QUARTÉ — 7 CHEVAUX
+</strong>
+
+<span>
+${safe(t.quarte || "-")}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+🏇 QUINTÉ — 8 CHEVAUX
+</strong>
+
+<span>
+${safe(t.quinte || "-")}
+</span>
+
+</div>
+
 </div>
 
 ${
   t.notes
     ? `
     <div class="archive-notes">
+
       📝
       <b>Commentaire :</b>
+
       <br>
+
       ${safe(t.notes)}
+
     </div>
     `
     : ""
@@ -1025,8 +1280,8 @@ ${
 <div style="margin-top:15px">
 
 <a
-class="btn"
-href="/archives/${t.id}"
+  class="btn"
+  href="/archives/${t.id}"
 >
 Voir le pronostic complet
 </a>
@@ -1037,70 +1292,76 @@ Voir le pronostic complet
 
 `;
 
-      })
-      .join("");
+        })
+        .join("");
 
+    }
+
+    res.send(
+      page(
+        req,
+        "Archives",
+        content
+      )
+    );
   }
-
-  res.send(
-    page(
-      req,
-      "Archives",
-      content
-    )
-  );
-});
+);
 
 /* =========================================================
    ARCHIVE — DÉTAIL
 ========================================================= */
 
-app.get("/archives/:id", (req, res) => {
+app.get(
+  "/archives/:id",
+  (req, res) => {
 
-  const t = db
-    .prepare(`
-      SELECT *
-      FROM tips
-      WHERE id = ?
-    `)
-    .get(req.params.id);
+    const t =
+      db
+        .prepare(`
+          SELECT *
+          FROM tips
+          WHERE id = ?
+        `)
+        .get(
+          req.params.id
+        );
 
-  if (!t) {
+    if (!t) {
 
-    return res.status(404).send(
+      return res.status(404).send(
+        page(
+          req,
+          "Archive introuvable",
+          `
+          <div class="card">
+
+            <h1>
+              Archive introuvable
+            </h1>
+
+            <p>
+              Ce pronostic n'existe pas
+              ou a été supprimé.
+            </p>
+
+            <a
+              class="btn"
+              href="/archives"
+            >
+              Retour aux archives
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+
+    res.send(
       page(
         req,
-        "Archive introuvable",
+        "Archive — " + t.title,
         `
-        <div class="card">
-
-          <h1>
-          Archive introuvable
-          </h1>
-
-          <p>
-          Ce pronostic n'existe pas ou a été supprimé.
-          </p>
-
-          <a
-          class="btn"
-          href="/archives"
-          >
-          Retour aux archives
-          </a>
-
-        </div>
-        `
-      )
-    );
-
-  }
-
-  res.send(
-    page(
-      req,
-      "Archive — " + t.title,
-      `
 
 <div class="archive-card">
 
@@ -1124,6 +1385,7 @@ ${safe(t.title)}
 <div class="archive-info">
 
 🏇 Hippodrome :
+
 <b>
 ${safe(t.course)}
 </b>
@@ -1131,6 +1393,7 @@ ${safe(t.course)}
 <br><br>
 
 📏 Distance :
+
 <b>
 ${safe(t.distance)}
 </b>
@@ -1138,6 +1401,7 @@ ${safe(t.distance)}
 <br><br>
 
 🐎 Partants :
+
 <b>
 ${safe(t.runners)}
 </b>
@@ -1198,6 +1462,42 @@ ${safe(t.replacement || "-")}
 
 </div>
 
+<div class="archive-pick">
+
+<strong>
+🏇 TIERCÉ — 6 CHEVAUX
+</strong>
+
+<span>
+${safe(t.tierce || "-")}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+🏇 QUARTÉ — 7 CHEVAUX
+</strong>
+
+<span>
+${safe(t.quarte || "-")}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+🏇 QUINTÉ — 8 CHEVAUX
+</strong>
+
+<span>
+${safe(t.quinte || "-")}
+</span>
+
+</div>
+
 </div>
 
 ${
@@ -1220,8 +1520,8 @@ ${
 <div style="margin-top:20px">
 
 <a
-class="btn"
-href="/archives"
+  class="btn"
+  href="/archives"
 >
 ← Retour aux archives
 </a>
@@ -1231,22 +1531,24 @@ href="/archives"
 </div>
 
 `
-    )
-  );
-
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
    INSCRIPTION
 ========================================================= */
 
-app.get("/inscription", (req, res) => {
+app.get(
+  "/inscription",
+  (req, res) => {
 
-  res.send(
-    page(
-      req,
-      "Créer un compte",
-      `
+    res.send(
+      page(
+        req,
+        "Créer un compte",
+        `
 
 <div class="formbox">
 
@@ -1255,55 +1557,59 @@ Créer un compte
 </h1>
 
 <form
-method="post"
-action="/inscription"
+  method="post"
+  action="/inscription"
 >
 
 <label>
+
 Nom complet
 
 <input
-name="name"
-required
+  name="name"
+  required
 >
 
 </label>
 
 <label>
+
 E-mail
 
 <input
-type="email"
-name="email"
-required
+  type="email"
+  name="email"
+  required
 >
 
 </label>
 
 <label>
+
 Téléphone
 
 <input
-name="phone"
-required
+  name="phone"
+  required
 >
 
 </label>
 
 <label>
+
 Mot de passe
 
 <input
-type="password"
-name="password"
-minlength="8"
-required
+  type="password"
+  name="password"
+  minlength="8"
+  required
 >
 
 </label>
 
 <button
-class="btn"
+  class="btn"
 >
 Créer mon compte
 </button>
@@ -1313,87 +1619,103 @@ Créer mon compte
 </div>
 
 `
-    )
-  );
-
-});
-
-app.post("/inscription", (req, res) => {
-
-  const {
-    name,
-    email,
-    phone,
-    password
-  } = req.body;
-
-  if (
-    !name ||
-    !email ||
-    !phone ||
-    !password
-  ) {
-
-    return res.status(400).send(
-      page(
-        req,
-        "Erreur",
-        `
-        <div class="formbox">
-
-        <h1>
-        Erreur
-        </h1>
-
-        <p>
-        Informations manquantes.
-        </p>
-
-        </div>
-        `
       )
     );
-
   }
+);
 
-  try {
+app.post(
+  "/inscription",
+  (req, res) => {
 
-    const hash =
-      bcrypt.hashSync(
-        password,
-        12
+    const {
+      name,
+      email,
+      phone,
+      password
+    } = req.body;
+
+    if (
+      !name ||
+      !email ||
+      !phone ||
+      !password
+    ) {
+
+      return res.status(400).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="formbox">
+
+            <h1>
+              Erreur
+            </h1>
+
+            <p>
+              Informations manquantes.
+            </p>
+
+          </div>
+          `
+        )
       );
+    }
 
-    const info =
-      db
-        .prepare(`
-          INSERT INTO users
-          (name,email,phone,password_hash,role)
-          VALUES (?,?,?,?,?)
-        `)
-        .run(
-          name,
-          email.toLowerCase(),
-          phone,
-          hash,
-          "member"
+    try {
+
+      const hash =
+        bcrypt.hashSync(
+          password,
+          12
         );
 
-    req.session.userId =
-      info.lastInsertRowid;
+      const info =
+        db
+          .prepare(`
+            INSERT INTO users
+            (
+              name,
+              email,
+              phone,
+              password_hash,
+              role
+            )
+            VALUES (?, ?, ?, ?, ?)
+          `)
+          .run(
+            name.trim(),
+            email
+              .trim()
+              .toLowerCase(),
+            phone.trim(),
+            hash,
+            "member"
+          );
 
-    req.session.role =
-      "member";
+      req.session.userId =
+        info.lastInsertRowid;
 
-    res.redirect("/abonnement");
+      req.session.role =
+        "member";
 
-  } catch (e) {
+      res.redirect(
+        "/abonnement"
+      );
 
-    res.status(400).send(
-      page(
-        req,
-        "Erreur",
-        `
+    } catch (e) {
+
+      console.error(
+        "Erreur inscription :",
+        e.message
+      );
+
+      res.status(400).send(
+        page(
+          req,
+          "Erreur",
+          `
 
 <div class="formbox">
 
@@ -1402,12 +1724,13 @@ Erreur
 </h1>
 
 <p>
-Cette adresse e-mail existe déjà.
+Cette adresse e-mail existe déjà
+ou les informations sont invalides.
 </p>
 
 <a
-class="btn"
-href="/connexion"
+  class="btn"
+  href="/connexion"
 >
 Se connecter
 </a>
@@ -1415,24 +1738,25 @@ Se connecter
 </div>
 
 `
-      )
-    );
-
+        )
+      );
+    }
   }
-
-});
+);
 
 /* =========================================================
    CONNEXION
 ========================================================= */
 
-app.get("/connexion", (req, res) => {
+app.get(
+  "/connexion",
+  (req, res) => {
 
-  res.send(
-    page(
-      req,
-      "Connexion",
-      `
+    res.send(
+      page(
+        req,
+        "Connexion",
+        `
 
 <div class="formbox">
 
@@ -1441,34 +1765,36 @@ Connexion
 </h1>
 
 <form
-method="post"
-action="/connexion"
+  method="post"
+  action="/connexion"
 >
 
 <label>
+
 E-mail
 
 <input
-type="email"
-name="email"
-required
+  type="email"
+  name="email"
+  required
 >
 
 </label>
 
 <label>
+
 Mot de passe
 
 <input
-type="password"
-name="password"
-required
+  type="password"
+  name="password"
+  required
 >
 
 </label>
 
 <button
-class="btn"
+  class="btn"
 >
 Se connecter
 </button>
@@ -1477,47 +1803,52 @@ Se connecter
 
 <p>
 Pas encore de compte ?
+
 <a href="/inscription">
 Créer un compte
 </a>
+
 </p>
 
 </div>
 
 `
-    )
-  );
+      )
+    );
+  }
+);
 
-});
+app.post(
+  "/connexion",
+  (req, res) => {
 
-app.post("/connexion", (req, res) => {
+    const email =
+      (req.body.email || "")
+        .trim()
+        .toLowerCase();
 
-  const email =
-    (req.body.email || "")
-      .toLowerCase();
+    const u =
+      db
+        .prepare(`
+          SELECT *
+          FROM users
+          WHERE email = ?
+        `)
+        .get(email);
 
-  const u =
-    db
-      .prepare(`
-        SELECT *
-        FROM users
-        WHERE email = ?
-      `)
-      .get(email);
+    if (
+      !u ||
+      !bcrypt.compareSync(
+        req.body.password || "",
+        u.password_hash
+      )
+    ) {
 
-  if (
-    !u ||
-    !bcrypt.compareSync(
-      req.body.password || "",
-      u.password_hash
-    )
-  ) {
-
-    return res.status(401).send(
-      page(
-        req,
-        "Connexion",
-        `
+      return res.status(401).send(
+        page(
+          req,
+          "Connexion",
+          `
 
 <div class="formbox">
 
@@ -1530,8 +1861,8 @@ Identifiants incorrects.
 </p>
 
 <a
-class="btn"
-href="/connexion"
+  class="btn"
+  href="/connexion"
 >
 Réessayer
 </a>
@@ -1539,48 +1870,60 @@ Réessayer
 </div>
 
 `
-      )
+        )
+      );
+    }
+
+    req.session.userId =
+      u.id;
+
+    req.session.role =
+      u.role;
+
+    if (
+      u.role === "admin"
+    ) {
+      return res.redirect(
+        "/admin"
+      );
+    }
+
+    res.redirect(
+      "/compte"
     );
-
   }
-
-  req.session.userId =
-    u.id;
-
-  req.session.role =
-    u.role;
-
-  if (u.role === "admin") {
-    return res.redirect("/admin");
-  }
-
-  res.redirect("/compte");
-
-});
+);
 
 /* =========================================================
    DÉCONNEXION
 ========================================================= */
 
-app.get("/deconnexion", (req, res) => {
+app.get(
+  "/deconnexion",
+  (req, res) => {
 
-  req.session.destroy(() => {
-    res.redirect("/");
-  });
-
-});
+    req.session.destroy(
+      () => {
+        res.redirect("/");
+      }
+    );
+  }
+);
 
 /* =========================================================
    ABONNEMENT
 ========================================================= */
 
-app.get("/abonnement", auth, (req, res) => {
+app.get(
+  "/abonnement",
+  auth,
+  (req, res) => {
 
-  res.send(
-    page(
-      req,
-      "Abonnement",
-      `
+    res.send(
+      page(
+        req,
+        "Abonnement",
+        `
 
 <div class="grid">
 
@@ -1603,8 +1946,8 @@ VIP 15 JOURS
 <br><br>
 
 <a
-class="btn"
-href="/payer?plan=15"
+  class="btn"
+  href="/payer?plan=15"
 >
 Payer avec Orange Money
 </a>
@@ -1624,8 +1967,8 @@ VIP 1 MOIS
 <br><br>
 
 <a
-class="btn"
-href="/payer?plan=30"
+  class="btn"
+  href="/payer?plan=30"
 >
 Payer avec Orange Money
 </a>
@@ -1651,49 +1994,54 @@ vérifier et activer votre accès.
 </div>
 
 `
-    )
-  );
-
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
    PAIEMENT
 ========================================================= */
 
-app.get("/payer", auth, (req, res) => {
+app.get(
+  "/payer",
+  auth,
+  (req, res) => {
 
-  const plan =
-    req.query.plan === "30"
-      ? "30"
-      : "15";
+    const plan =
+      req.query.plan === "30"
+        ? "30"
+        : "15";
 
-  const amount =
-    plan === "30"
-      ? 100
-      : 70;
+    const amount =
+      plan === "30"
+        ? 100
+        : 70;
 
-  const user =
-    db
-      .prepare(`
-        SELECT *
-        FROM users
-        WHERE id = ?
-      `)
-      .get(req.session.userId);
+    const user =
+      db
+        .prepare(`
+          SELECT *
+          FROM users
+          WHERE id = ?
+        `)
+        .get(
+          req.session.userId
+        );
 
-  const number =
-    process.env.ORANGE_MONEY_NUMBER ||
-    "À CONFIGURER";
+    const number =
+      process.env.ORANGE_MONEY_NUMBER ||
+      "À CONFIGURER";
 
-  const merchant =
-    process.env.ORANGE_MONEY_NAME ||
-    "À CONFIGURER";
+    const merchant =
+      process.env.ORANGE_MONEY_NAME ||
+      "À CONFIGURER";
 
-  res.send(
-    page(
-      req,
-      "Paiement",
-      `
+    res.send(
+      page(
+        req,
+        "Paiement",
+        `
 
 <div class="formbox">
 
@@ -1706,9 +2054,11 @@ Paiement Orange Money
 Abonnement :
 
 <b>
-${plan === "30"
-  ? "1 mois"
-  : "15 jours"}
+${
+  plan === "30"
+    ? "1 mois"
+    : "15 jours"
+}
 </b>
 
 —
@@ -1738,14 +2088,14 @@ ${safe(merchant)}
 </div>
 
 <form
-method="post"
-action="/payer"
+  method="post"
+  action="/payer"
 >
 
 <input
-type="hidden"
-name="plan"
-value="${plan}"
+  type="hidden"
+  name="plan"
+  value="${plan}"
 >
 
 <label>
@@ -1753,9 +2103,9 @@ value="${plan}"
 Numéro Orange Money utilisé
 
 <input
-name="phone"
-value="${safe(user.phone)}"
-required
+  name="phone"
+  value="${safe(user.phone)}"
+  required
 >
 
 </label>
@@ -1765,14 +2115,14 @@ required
 Référence / ID de transaction
 
 <input
-name="transaction_ref"
-required
+  name="transaction_ref"
+  required
 >
 
 </label>
 
 <button
-class="btn"
+  class="btn"
 >
 Envoyer la demande
 </button>
@@ -1782,46 +2132,94 @@ Envoyer la demande
 </div>
 
 `
-    )
-  );
+      )
+    );
+  }
+);
 
-});
+app.post(
+  "/payer",
+  auth,
+  (req, res) => {
 
-app.post("/payer", auth, (req, res) => {
+    const plan =
+      req.body.plan === "30"
+        ? "30"
+        : "15";
 
-  const plan =
-    req.body.plan === "30"
-      ? "30"
-      : "15";
+    const amount =
+      plan === "30"
+        ? 100
+        : 70;
 
-  const amount =
-    plan === "30"
-      ? 100
-      : 70;
+    const phone =
+      String(
+        req.body.phone || ""
+      ).trim();
 
-  db.prepare(`
-    INSERT INTO payments
-    (
-      user_id,
+    const transactionRef =
+      String(
+        req.body.transaction_ref || ""
+      ).trim();
+
+    if (
+      !phone ||
+      !transactionRef
+    ) {
+
+      return res.status(400).send(
+        page(
+          req,
+          "Erreur paiement",
+          `
+          <div class="formbox">
+
+            <h1>
+              Erreur
+            </h1>
+
+            <p>
+              Veuillez renseigner
+              le numéro et la référence
+              de transaction.
+            </p>
+
+            <a
+              class="btn"
+              href="/abonnement"
+            >
+              Retour
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO payments
+      (
+        user_id,
+        plan,
+        amount_eur,
+        phone,
+        transaction_ref
+      )
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      req.session.userId,
       plan,
-      amount_eur,
+      amount,
       phone,
-      transaction_ref
-    )
-    VALUES (?, ?, ?, ?, ?)
-  `).run(
-    req.session.userId,
-    plan,
-    amount,
-    req.body.phone,
-    req.body.transaction_ref
-  );
+      transactionRef
+    );
 
-  res.send(
-    page(
-      req,
-      "Paiement envoyé",
-      `
+    res.send(
+      page(
+        req,
+        "Paiement envoyé",
+        `
 
 <div class="formbox">
 
@@ -1839,8 +2237,8 @@ votre accès VIP sera activé.
 </p>
 
 <a
-class="btn"
-href="/compte"
+  class="btn"
+  href="/compte"
 >
 Mon compte
 </a>
@@ -1848,44 +2246,49 @@ Mon compte
 </div>
 
 `
-    )
-  );
-
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
    COMPTE
 ========================================================= */
 
-app.get("/compte", auth, (req, res) => {
+app.get(
+  "/compte",
+  auth,
+  (req, res) => {
 
-  const u =
-    db
-      .prepare(`
-        SELECT *
-        FROM users
-        WHERE id = ?
-      `)
-      .get(req.session.userId);
+    const u =
+      db
+        .prepare(`
+          SELECT *
+          FROM users
+          WHERE id = ?
+        `)
+        .get(
+          req.session.userId
+        );
 
-  const payments =
-    db
-      .prepare(`
-        SELECT *
-        FROM payments
-        WHERE user_id = ?
-        ORDER BY id DESC
-      `)
-      .all(u.id);
+    const payments =
+      db
+        .prepare(`
+          SELECT *
+          FROM payments
+          WHERE user_id = ?
+          ORDER BY id DESC
+        `)
+        .all(u.id);
 
-  const active =
-    isVip(u);
+    const active =
+      isVip(u);
 
-  res.send(
-    page(
-      req,
-      "Mon compte",
-      `
+    res.send(
+      page(
+        req,
+        "Mon compte",
+        `
 
 <div class="card">
 
@@ -1901,9 +2304,11 @@ ${safe(u.phone)}
 
 <h2>
 Statut :
-${active
-  ? "🟢 VIP actif"
-  : "⚪ Non abonné"}
+${
+  active
+    ? "🟢 VIP actif"
+    : "⚪ Non abonné"
+}
 </h2>
 
 ${
@@ -1919,14 +2324,16 @@ Votre accès VIP expire le :
 <b>
 ${new Date(
   u.vip_until
-).toLocaleString("fr-FR")}
+).toLocaleString(
+  "fr-FR"
+)}
 </b>
 
 </p>
 
 <a
-class="btn"
-href="/pronostic"
+  class="btn"
+  href="/pronostic"
 >
 Accéder au pronostic
 </a>
@@ -1937,8 +2344,8 @@ Accéder au pronostic
     : `
 
 <a
-class="btn"
-href="/abonnement"
+  class="btn"
+  href="/abonnement"
 >
 Choisir un abonnement
 </a>
@@ -1987,50 +2394,60 @@ ${safe(
 </div>
 
 `
-    )
-  );
-
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
    PRONOSTIC VIP
 ========================================================= */
 
-app.get("/pronostic", auth, (req, res) => {
+app.get(
+  "/pronostic",
+  auth,
+  (req, res) => {
 
-  const u =
-    db
-      .prepare(`
-        SELECT *
-        FROM users
-        WHERE id = ?
-      `)
-      .get(req.session.userId);
+    const u =
+      db
+        .prepare(`
+          SELECT *
+          FROM users
+          WHERE id = ?
+        `)
+        .get(
+          req.session.userId
+        );
 
-  if (
-    !isVip(u) &&
-    u.role !== "admin"
-  ) {
-    return res.redirect("/abonnement");
-  }
+    if (
+      !isVip(u) &&
+      u.role !== "admin"
+    ) {
 
-  const t =
-    db
-      .prepare(`
-        SELECT *
-        FROM tips
-        ORDER BY race_date DESC, id DESC
-        LIMIT 1
-      `)
-      .get();
+      return res.redirect(
+        "/abonnement"
+      );
+    }
 
-  if (!t) {
+    const t =
+      db
+        .prepare(`
+          SELECT *
+          FROM tips
+          ORDER BY
+            race_date DESC,
+            id DESC
+          LIMIT 1
+        `)
+        .get();
 
-    return res.send(
-      page(
-        req,
-        "Pronostic",
-        `
+    if (!t) {
+
+      return res.send(
+        page(
+          req,
+          "Pronostic",
+          `
 
 <div class="card">
 
@@ -2041,16 +2458,15 @@ Aucun pronostic disponible.
 </div>
 
 `
-      )
-    );
+        )
+      );
+    }
 
-  }
-
-  res.send(
-    page(
-      req,
-      "Pronostic VIP",
-      `
+    res.send(
+      page(
+        req,
+        "Pronostic VIP",
+        `
 
 <div class="card">
 
@@ -2129,6 +2545,46 @@ ${safe(t.replacement || "-")}
 
 </div>
 
+<h2>
+🎯 Combinaisons principales
+</h2>
+
+<div class="selection-card">
+
+<h3>
+🏇 TIERCÉ — 6 CHEVAUX
+</h3>
+
+<div class="numbers">
+${safe(t.tierce || "-")}
+</div>
+
+</div>
+
+<div class="selection-card">
+
+<h3>
+🏇 QUARTÉ — 7 CHEVAUX
+</h3>
+
+<div class="numbers">
+${safe(t.quarte || "-")}
+</div>
+
+</div>
+
+<div class="selection-card">
+
+<h3>
+🏇 QUINTÉ — 8 CHEVAUX
+</h3>
+
+<div class="numbers">
+${safe(t.quinte || "-")}
+</div>
+
+</div>
+
 <div class="notice">
 
 ${safe(t.notes || "")}
@@ -2138,60 +2594,65 @@ ${safe(t.notes || "")}
 </div>
 
 `
-    )
-  );
-
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
-   ADMIN
+   ADMINISTRATION
 ========================================================= */
 
-app.get("/admin", admin, (req, res) => {
+app.get(
+  "/admin",
+  admin,
+  (req, res) => {
 
-  const users =
-    db
-      .prepare(`
-        SELECT
-          id,
-          name,
-          email,
-          phone,
-          role,
-          vip_until
-        FROM users
-        ORDER BY id DESC
-      `)
-      .all();
+    const users =
+      db
+        .prepare(`
+          SELECT
+            id,
+            name,
+            email,
+            phone,
+            role,
+            vip_until
+          FROM users
+          ORDER BY id DESC
+        `)
+        .all();
 
-  const payments =
-    db
-      .prepare(`
-        SELECT
-          p.*,
-          u.name,
-          u.email
-        FROM payments p
-        JOIN users u
-          ON u.id = p.user_id
-        ORDER BY p.id DESC
-      `)
-      .all();
+    const payments =
+      db
+        .prepare(`
+          SELECT
+            p.*,
+            u.name,
+            u.email
+          FROM payments p
+          JOIN users u
+            ON u.id = p.user_id
+          ORDER BY p.id DESC
+        `)
+        .all();
 
-  const tips =
-    db
-      .prepare(`
-        SELECT *
-        FROM tips
-        ORDER BY race_date DESC, id DESC
-      `)
-      .all();
+    const tips =
+      db
+        .prepare(`
+          SELECT *
+          FROM tips
+          ORDER BY
+            race_date DESC,
+            id DESC
+        `)
+        .all();
 
-  res.send(
-    page(
-      req,
-      "Administration",
-      `
+    res.send(
+      page(
+        req,
+        "Administration",
+        `
 
 <div class="card">
 
@@ -2214,8 +2675,8 @@ Spécial Quinté Français
 </h2>
 
 <a
-class="btn success"
-href="/admin/tip/new"
+  class="btn success"
+  href="/admin/tip/new"
 >
 ➕ Nouveau pronostic
 </a>
@@ -2256,31 +2717,52 @@ ${safe(t.outsiders)}
 Remplaçant :
 ${safe(t.replacement || "-")}
 
+<br>
+
+Tiercé 6 chevaux :
+<b>
+${safe(t.tierce || "-")}
+</b>
+
+<br>
+
+Quarté 7 chevaux :
+<b>
+${safe(t.quarte || "-")}
+</b>
+
+<br>
+
+Quinté 8 chevaux :
+<b>
+${safe(t.quinte || "-")}
+</b>
+
 <div class="admin-actions">
 
 <a
-class="btn"
-href="/admin/tip/edit/${t.id}"
+  class="btn"
+  href="/admin/tip/edit/${t.id}"
 >
 Modifier
 </a>
 
 <form
-method="post"
-action="/admin/tip/delete"
-style="display:inline"
+  method="post"
+  action="/admin/tip/delete"
+  style="display:inline"
 >
 
 <input
-type="hidden"
-name="id"
-value="${t.id}"
+  type="hidden"
+  name="id"
+  value="${t.id}"
 >
 
 <button
-class="btn danger"
-type="submit"
-onclick="return confirm('Supprimer ce pronostic ?')"
+  class="btn danger"
+  type="submit"
+  onclick="return confirm('Supprimer ce pronostic ?')"
 >
 Supprimer
 </button>
@@ -2344,19 +2826,19 @@ ${
     ? `
 
 <form
-method="post"
-action="/admin/confirm"
-style="margin-top:10px"
+  method="post"
+  action="/admin/confirm"
+  style="margin-top:10px"
 >
 
 <input
-type="hidden"
-name="payment_id"
-value="${p.id}"
+  type="hidden"
+  name="payment_id"
+  value="${p.id}"
 >
 
 <button
-class="btn success"
+  class="btn success"
 >
 Confirmer le paiement
 </button>
@@ -2421,22 +2903,25 @@ ${
 </div>
 
 `
-    )
-  );
-
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
    NOUVEAU PRONOSTIC
 ========================================================= */
 
-app.get("/admin/tip/new", admin, (req, res) => {
+app.get(
+  "/admin/tip/new",
+  admin,
+  (req, res) => {
 
-  res.send(
-    page(
-      req,
-      "Nouveau pronostic",
-      `
+    res.send(
+      page(
+        req,
+        "Nouveau pronostic",
+        `
 
 <div class="formbox">
 
@@ -2445,8 +2930,8 @@ app.get("/admin/tip/new", admin, (req, res) => {
 </h1>
 
 <form
-method="post"
-action="/admin/tip/new"
+  method="post"
+  action="/admin/tip/new"
 >
 
 <label>
@@ -2454,9 +2939,9 @@ action="/admin/tip/new"
 Date de la course
 
 <input
-type="date"
-name="race_date"
-required
+  type="date"
+  name="race_date"
+  required
 >
 
 </label>
@@ -2466,9 +2951,9 @@ required
 Titre
 
 <input
-name="title"
-placeholder="Quinté du jour — R1C1"
-required
+  name="title"
+  placeholder="Quinté du jour — R1C1"
+  required
 >
 
 </label>
@@ -2478,9 +2963,9 @@ required
 Heure
 
 <input
-name="start_time"
-placeholder="13H50"
-required
+  name="start_time"
+  placeholder="13H50"
+  required
 >
 
 </label>
@@ -2490,9 +2975,9 @@ required
 Hippodrome
 
 <input
-name="course"
-placeholder="Deauville"
-required
+  name="course"
+  placeholder="Deauville"
+  required
 >
 
 </label>
@@ -2502,9 +2987,9 @@ required
 Distance
 
 <input
-name="distance"
-placeholder="2 400 M"
-required
+  name="distance"
+  placeholder="2 400 M"
+  required
 >
 
 </label>
@@ -2514,10 +2999,10 @@ required
 Nombre de partants
 
 <input
-type="number"
-name="runners"
-min="1"
-required
+  type="number"
+  name="runners"
+  min="1"
+  required
 >
 
 </label>
@@ -2527,9 +3012,9 @@ required
 Bases
 
 <input
-name="bases"
-placeholder="5 – 8 – 12"
-required
+  name="bases"
+  placeholder="5 – 8 – 12"
+  required
 >
 
 </label>
@@ -2539,9 +3024,9 @@ required
 Secondes chances
 
 <input
-name="second_chances"
-placeholder="3 – 7 – 10"
-required
+  name="second_chances"
+  placeholder="3 – 7 – 10"
+  required
 >
 
 </label>
@@ -2551,9 +3036,9 @@ required
 Outsiders
 
 <input
-name="outsiders"
-placeholder="2 – 11 – 14"
-required
+  name="outsiders"
+  placeholder="2 – 11 – 14"
+  required
 >
 
 </label>
@@ -2563,8 +3048,50 @@ required
 Remplaçant
 
 <input
-name="replacement"
-placeholder="6"
+  name="replacement"
+  placeholder="6"
+>
+
+</label>
+
+<hr>
+
+<h2>
+🎯 Combinaisons
+</h2>
+
+<label>
+
+🏇 Tiercé en 6 chevaux
+
+<input
+  name="tierce"
+  placeholder="5 – 8 – 12 – 3 – 7 – 10"
+  required
+>
+
+</label>
+
+<label>
+
+🏇 Quarté en 7 chevaux
+
+<input
+  name="quarte"
+  placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2"
+  required
+>
+
+</label>
+
+<label>
+
+🏇 Quinté en 8 chevaux
+
+<input
+  name="quinte"
+  placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2 – 11"
+  required
 >
 
 </label>
@@ -2574,13 +3101,13 @@ placeholder="6"
 Notes / commentaire
 
 <textarea
-name="notes"
+  name="notes"
 ></textarea>
 
 </label>
 
 <button
-class="btn success"
+  class="btn success"
 >
 Publier le pronostic
 </button>
@@ -2590,46 +3117,111 @@ Publier le pronostic
 </div>
 
 `
-    )
-  );
+      )
+    );
+  }
+);
 
-});
+/* =========================================================
+   ENREGISTREMENT NOUVEAU PRONOSTIC
+========================================================= */
 
-app.post("/admin/tip/new", admin, (req, res) => {
+app.post(
+  "/admin/tip/new",
+  admin,
+  (req, res) => {
 
-  db.prepare(`
-    INSERT INTO tips
-    (
-      race_date,
-      title,
-      start_time,
-      course,
-      distance,
+    const runners =
+      Number(
+        req.body.runners
+      );
+
+    if (
+      !req.body.race_date ||
+      !req.body.title ||
+      !req.body.start_time ||
+      !req.body.course ||
+      !req.body.distance ||
+      !Number.isInteger(runners) ||
+      runners < 1 ||
+      !req.body.bases ||
+      !req.body.second_chances ||
+      !req.body.outsiders ||
+      !req.body.tierce ||
+      !req.body.quarte ||
+      !req.body.quinte
+    ) {
+
+      return res.status(400).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="formbox">
+
+            <h1>
+              Erreur
+            </h1>
+
+            <p>
+              Veuillez remplir correctement
+              tous les champs obligatoires.
+            </p>
+
+            <a
+              class="btn"
+              href="/admin/tip/new"
+            >
+              Retour
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO tips
+      (
+        race_date,
+        title,
+        start_time,
+        course,
+        distance,
+        runners,
+        bases,
+        second_chances,
+        outsiders,
+        replacement,
+        notes,
+        tierce,
+        quarte,
+        quinte
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      req.body.race_date,
+      req.body.title.trim(),
+      req.body.start_time.trim(),
+      req.body.course.trim(),
+      req.body.distance.trim(),
       runners,
-      bases,
-      second_chances,
-      outsiders,
-      replacement,
-      notes
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    req.body.race_date,
-    req.body.title,
-    req.body.start_time,
-    req.body.course,
-    req.body.distance,
-    Number(req.body.runners),
-    req.body.bases,
-    req.body.second_chances,
-    req.body.outsiders,
-    req.body.replacement || "",
-    req.body.notes || ""
-  );
+      req.body.bases.trim(),
+      req.body.second_chances.trim(),
+      req.body.outsiders.trim(),
+      (req.body.replacement || "").trim(),
+      (req.body.notes || "").trim(),
+      req.body.tierce.trim(),
+      req.body.quarte.trim(),
+      req.body.quinte.trim()
+    );
 
-  res.redirect("/admin");
-
-});
+    res.redirect(
+      "/admin"
+    );
+  }
+);
 
 /* =========================================================
    MODIFICATION PRONOSTIC
@@ -2647,11 +3239,33 @@ app.get(
           FROM tips
           WHERE id = ?
         `)
-        .get(req.params.id);
+        .get(
+          req.params.id
+        );
 
     if (!t) {
+
       return res.status(404).send(
-        "Pronostic introuvable."
+        page(
+          req,
+          "Pronostic introuvable",
+          `
+          <div class="card">
+
+            <h1>
+              Pronostic introuvable
+            </h1>
+
+            <a
+              class="btn"
+              href="/admin"
+            >
+              Retour administration
+            </a>
+
+          </div>
+          `
+        )
       );
     }
 
@@ -2668,8 +3282,8 @@ app.get(
 </h1>
 
 <form
-method="post"
-action="/admin/tip/edit/${t.id}"
+  method="post"
+  action="/admin/tip/edit/${t.id}"
 >
 
 <label>
@@ -2677,10 +3291,10 @@ action="/admin/tip/edit/${t.id}"
 Date
 
 <input
-type="date"
-name="race_date"
-value="${safe(t.race_date)}"
-required
+  type="date"
+  name="race_date"
+  value="${safe(t.race_date)}"
+  required
 >
 
 </label>
@@ -2690,9 +3304,9 @@ required
 Titre
 
 <input
-name="title"
-value="${safe(t.title)}"
-required
+  name="title"
+  value="${safe(t.title)}"
+  required
 >
 
 </label>
@@ -2702,9 +3316,9 @@ required
 Heure
 
 <input
-name="start_time"
-value="${safe(t.start_time)}"
-required
+  name="start_time"
+  value="${safe(t.start_time)}"
+  required
 >
 
 </label>
@@ -2714,9 +3328,9 @@ required
 Hippodrome
 
 <input
-name="course"
-value="${safe(t.course)}"
-required
+  name="course"
+  value="${safe(t.course)}"
+  required
 >
 
 </label>
@@ -2726,9 +3340,9 @@ required
 Distance
 
 <input
-name="distance"
-value="${safe(t.distance)}"
-required
+  name="distance"
+  value="${safe(t.distance)}"
+  required
 >
 
 </label>
@@ -2738,10 +3352,11 @@ required
 Partants
 
 <input
-type="number"
-name="runners"
-value="${safe(t.runners)}"
-required
+  type="number"
+  name="runners"
+  value="${safe(t.runners)}"
+  min="1"
+  required
 >
 
 </label>
@@ -2751,9 +3366,9 @@ required
 Bases
 
 <input
-name="bases"
-value="${safe(t.bases)}"
-required
+  name="bases"
+  value="${safe(t.bases)}"
+  required
 >
 
 </label>
@@ -2763,9 +3378,9 @@ required
 Secondes chances
 
 <input
-name="second_chances"
-value="${safe(t.second_chances)}"
-required
+  name="second_chances"
+  value="${safe(t.second_chances)}"
+  required
 >
 
 </label>
@@ -2775,9 +3390,9 @@ required
 Outsiders
 
 <input
-name="outsiders"
-value="${safe(t.outsiders)}"
-required
+  name="outsiders"
+  value="${safe(t.outsiders)}"
+  required
 >
 
 </label>
@@ -2787,10 +3402,61 @@ required
 Remplaçant
 
 <input
-name="replacement"
-value="${safe(
-  t.replacement || ""
-)}"
+  name="replacement"
+  value="${safe(
+    t.replacement || ""
+  )}"
+>
+
+</label>
+
+<hr>
+
+<h2>
+🎯 Combinaisons
+</h2>
+
+<label>
+
+🏇 Tiercé en 6 chevaux
+
+<input
+  name="tierce"
+  value="${safe(
+    t.tierce || ""
+  )}"
+  placeholder="5 – 8 – 12 – 3 – 7 – 10"
+  required
+>
+
+</label>
+
+<label>
+
+🏇 Quarté en 7 chevaux
+
+<input
+  name="quarte"
+  value="${safe(
+    t.quarte || ""
+  )}"
+  placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2"
+  required
+>
+
+</label>
+
+<label>
+
+🏇 Quinté en 8 chevaux
+
+<input
+  name="quinte"
+  value="${safe(
+    t.quinte || ""
+  )}"
+  placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2 – 11"
+  required
 >
 
 </label>
@@ -2800,13 +3466,13 @@ value="${safe(
 Notes
 
 <textarea
-name="notes"
+  name="notes"
 >${safe(t.notes || "")}</textarea>
 
 </label>
 
 <button
-class="btn success"
+  class="btn success"
 >
 Enregistrer les modifications
 </button>
@@ -2818,14 +3484,69 @@ Enregistrer les modifications
 `
       )
     );
-
   }
 );
+
+/* =========================================================
+   ENREGISTRER MODIFICATION
+========================================================= */
 
 app.post(
   "/admin/tip/edit/:id",
   admin,
   (req, res) => {
+
+    const runners =
+      Number(
+        req.body.runners
+      );
+
+    if (
+      !req.body.race_date ||
+      !req.body.title ||
+      !req.body.start_time ||
+      !req.body.course ||
+      !req.body.distance ||
+      !Number.isInteger(runners) ||
+      runners < 1 ||
+      !req.body.bases ||
+      !req.body.second_chances ||
+      !req.body.outsiders ||
+      !req.body.tierce ||
+      !req.body.quarte ||
+      !req.body.quinte
+    ) {
+
+      return res.status(400).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="formbox">
+
+            <h1>
+              Erreur
+            </h1>
+
+            <p>
+              Veuillez remplir correctement
+              tous les champs obligatoires.
+            </p>
+
+            <a
+              class="btn"
+              href="/admin/tip/edit/${safe(
+                req.params.id
+              )}"
+            >
+              Retour
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
 
     db.prepare(`
       UPDATE tips
@@ -2840,25 +3561,32 @@ app.post(
         second_chances = ?,
         outsiders = ?,
         replacement = ?,
-        notes = ?
+        notes = ?,
+        tierce = ?,
+        quarte = ?,
+        quinte = ?
       WHERE id = ?
     `).run(
       req.body.race_date,
-      req.body.title,
-      req.body.start_time,
-      req.body.course,
-      req.body.distance,
-      Number(req.body.runners),
-      req.body.bases,
-      req.body.second_chances,
-      req.body.outsiders,
-      req.body.replacement || "",
-      req.body.notes || "",
+      req.body.title.trim(),
+      req.body.start_time.trim(),
+      req.body.course.trim(),
+      req.body.distance.trim(),
+      runners,
+      req.body.bases.trim(),
+      req.body.second_chances.trim(),
+      req.body.outsiders.trim(),
+      (req.body.replacement || "").trim(),
+      (req.body.notes || "").trim(),
+      req.body.tierce.trim(),
+      req.body.quarte.trim(),
+      req.body.quinte.trim(),
       req.params.id
     );
 
-    res.redirect("/admin");
-
+    res.redirect(
+      "/admin"
+    );
   }
 );
 
@@ -2871,12 +3599,26 @@ app.post(
   admin,
   (req, res) => {
 
+    const id =
+      Number(req.body.id);
+
+    if (
+      !Number.isInteger(id) ||
+      id < 1
+    ) {
+
+      return res.status(400).send(
+        "Identifiant de pronostic invalide."
+      );
+    }
+
     db.prepare(
       "DELETE FROM tips WHERE id = ?"
-    ).run(req.body.id);
+    ).run(id);
 
-    res.redirect("/admin");
-
+    res.redirect(
+      "/admin"
+    );
   }
 );
 
@@ -2896,14 +3638,34 @@ app.post(
           FROM payments
           WHERE id = ?
         `)
-        .get(req.body.payment_id);
+        .get(
+          req.body.payment_id
+        );
 
     if (!payment) {
 
-      return res
-        .status(404)
-        .send("Paiement introuvable.");
+      return res.status(404).send(
+        page(
+          req,
+          "Paiement introuvable",
+          `
+          <div class="card">
 
+            <h1>
+              Paiement introuvable
+            </h1>
+
+            <a
+              class="btn"
+              href="/admin"
+            >
+              Retour
+            </a>
+
+          </div>
+          `
+        )
+      );
     }
 
     const days =
@@ -2911,10 +3673,50 @@ app.post(
         ? 30
         : 15;
 
+    const user =
+      db
+        .prepare(`
+          SELECT *
+          FROM users
+          WHERE id = ?
+        `)
+        .get(
+          payment.user_id
+        );
+
+    /*
+      Si l'utilisateur possède déjà
+      un abonnement encore actif,
+      le nouvel abonnement est ajouté
+      à sa date d'expiration actuelle.
+    */
+
+    let startDate =
+      new Date();
+
+    if (
+      user &&
+      user.vip_until
+    ) {
+
+      const currentEnd =
+        new Date(
+          user.vip_until
+        );
+
+      if (
+        currentEnd > startDate
+      ) {
+        startDate =
+          currentEnd;
+      }
+    }
+
     const until =
       new Date(
-        Date.now() +
-        days * 86400000
+        startDate.getTime() +
+        days *
+          86400000
       ).toISOString();
 
     db.prepare(`
@@ -2923,7 +3725,9 @@ app.post(
         status = 'confirmed',
         confirmed_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(payment.id);
+    `).run(
+      payment.id
+    );
 
     db.prepare(`
       UPDATE users
@@ -2934,8 +3738,9 @@ app.post(
       payment.user_id
     );
 
-    res.redirect("/admin");
-
+    res.redirect(
+      "/admin"
+    );
   }
 );
 
@@ -2943,13 +3748,14 @@ app.post(
    ROUTE 404
 ========================================================= */
 
-app.use((req, res) => {
+app.use(
+  (req, res) => {
 
-  res.status(404).send(
-    page(
-      req,
-      "Page introuvable",
-      `
+    res.status(404).send(
+      page(
+        req,
+        "Page introuvable",
+        `
 
 <div class="card">
 
@@ -2958,12 +3764,13 @@ app.use((req, res) => {
 </h1>
 
 <p>
-La page que vous recherchez n'existe pas.
+La page que vous recherchez
+n'existe pas.
 </p>
 
 <a
-class="btn"
-href="/"
+  class="btn"
+  href="/"
 >
 Retour à l'accueil
 </a>
@@ -2971,10 +3778,58 @@ Retour à l'accueil
 </div>
 
 `
-    )
-  );
+      )
+    );
+  }
+);
 
-});
+/* =========================================================
+   GESTIONNAIRE D'ERREUR
+========================================================= */
+
+app.use(
+  (err, req, res, next) => {
+
+    console.error(
+      "Erreur serveur :",
+      err
+    );
+
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    res.status(500).send(
+      page(
+        req,
+        "Erreur serveur",
+        `
+
+<div class="card">
+
+<h1>
+⚠️ Erreur serveur
+</h1>
+
+<p>
+Une erreur temporaire est survenue.
+Veuillez réessayer.
+</p>
+
+<a
+  class="btn"
+  href="/"
+>
+Retour à l'accueil
+</a>
+
+</div>
+
+`
+      )
+    );
+  }
+);
 
 /* =========================================================
    DÉMARRAGE
