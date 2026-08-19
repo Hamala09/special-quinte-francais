@@ -2,11 +2,16 @@ require("dotenv").config();
 
 const express = require("express");
 const session = require("express-session");
+const connectPgSimple = require("connect-pg-simple");
 const bcrypt = require("bcryptjs");
-const Database = require("better-sqlite3");
-const path = require("path");
+const { Pool } = require("pg");
+
+/* =========================================================
+   APPLICATION
+========================================================= */
 
 const app = express();
+
 const PORT = process.env.PORT || 3000;
 
 /* =========================================================
@@ -14,230 +19,73 @@ const PORT = process.env.PORT || 3000;
 ========================================================= */
 
 const ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL ||
   "admin@special-quinte-francais.com";
 
 const ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD ||
   "Compta@09";
 
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   "SPECIAL-QUINTE-FRANCAIS-SECRET-2026";
 
-/* =========================================================
-   BASE DE DONNÉES
-========================================================= */
+const DATABASE_URL =
+  process.env.DATABASE_URL;
 
-const db = new Database(
-  path.join(__dirname, "data.db")
-);
+const ORANGE_MONEY_NUMBER =
+  process.env.ORANGE_MONEY_NUMBER ||
+  "À CONFIGURER";
 
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-
-/* =========================================================
-   TABLES
-========================================================= */
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  email TEXT UNIQUE NOT NULL,
-  phone TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'member',
-  vip_until TEXT
-);
-
-CREATE TABLE IF NOT EXISTS payments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  plan TEXT NOT NULL,
-  amount_eur INTEGER NOT NULL,
-  phone TEXT NOT NULL,
-  transaction_ref TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  confirmed_at TEXT,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS tips (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  race_date TEXT NOT NULL,
-  title TEXT NOT NULL,
-  start_time TEXT NOT NULL,
-  course TEXT NOT NULL,
-  distance TEXT NOT NULL,
-  runners INTEGER NOT NULL,
-  bases TEXT NOT NULL,
-  second_chances TEXT NOT NULL,
-  outsiders TEXT NOT NULL,
-  replacement TEXT,
-  tierce TEXT,
-  quarte TEXT,
-  quinte TEXT,
-  notes TEXT
-);
-`);
+const ORANGE_MONEY_NAME =
+  process.env.ORANGE_MONEY_NAME ||
+  "À CONFIGURER";
 
 /* =========================================================
-   COMPATIBILITÉ ANCIENNE BASE
+   VÉRIFICATION DATABASE
 ========================================================= */
 
-function addColumnIfMissing(
-  table,
-  column,
-  definition
-) {
-  const columns = db
-    .prepare(`PRAGMA table_info(${table})`)
-    .all();
-
-  const exists = columns.some(
-    item => item.name === column
+if (!DATABASE_URL) {
+  console.error(
+    "ERREUR : DATABASE_URL n'est pas configurée."
   );
 
-  if (!exists) {
-    db.exec(
-      `ALTER TABLE ${table}
-       ADD COLUMN ${column} ${definition}`
-    );
-  }
-}
-
-addColumnIfMissing(
-  "tips",
-  "tierce",
-  "TEXT"
-);
-
-addColumnIfMissing(
-  "tips",
-  "quarte",
-  "TEXT"
-);
-
-addColumnIfMissing(
-  "tips",
-  "quinte",
-  "TEXT"
-);
-
-/* =========================================================
-   ADMIN
-========================================================= */
-
-const adminHash =
-  bcrypt.hashSync(
-    ADMIN_PASSWORD,
-    12
-  );
-
-const existingAdmin =
-  db
-    .prepare(
-      `
-      SELECT id
-      FROM users
-      WHERE email = ?
-      `
-    )
-    .get(ADMIN_EMAIL);
-
-if (!existingAdmin) {
-
-  db.prepare(
-    `
-    INSERT INTO users
-    (
-      name,
-      email,
-      phone,
-      password_hash,
-      role
-    )
-    VALUES (?, ?, ?, ?, ?)
-    `
-  ).run(
-    "Administrateur",
-    ADMIN_EMAIL,
-    "0000000000",
-    adminHash,
-    "admin"
-  );
-
-} else {
-
-  db.prepare(
-    `
-    UPDATE users
-    SET
-      password_hash = ?,
-      role = 'admin'
-    WHERE email = ?
-    `
-  ).run(
-    adminHash,
-    ADMIN_EMAIL
-  );
+  process.exit(1);
 }
 
 /* =========================================================
-   PRONOSTIC PAR DÉFAUT
+   POSTGRESQL
 ========================================================= */
 
-const existingTip =
-  db
-    .prepare(
-      `
-      SELECT id
-      FROM tips
-      LIMIT 1
-      `
-    )
-    .get();
+const isProduction =
+  process.env.NODE_ENV === "production";
 
-if (!existingTip) {
+const pool = new Pool({
+  connectionString: DATABASE_URL,
 
-  db.prepare(
-    `
-    INSERT INTO tips
-    (
-      race_date,
-      title,
-      start_time,
-      course,
-      distance,
-      runners,
-      bases,
-      second_chances,
-      outsiders,
-      replacement,
-      tierce,
-      quarte,
-      quinte,
-      notes
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-  ).run(
-    "2026-08-15",
-    "QUINTÉ DU JOUR — RÉUNION 1",
-    "13H50",
-    "France",
-    "2 400 M",
-    16,
-    "5 – 8 – 12",
-    "3 – 7 – 10",
-    "2 – 11 – 14",
-    "6",
-    "5 – 8 – 12 – 3 – 7 – 10",
-    "5 – 8 – 12 – 3 – 7 – 10 – 2",
-    "5 – 8 – 12 – 3 – 7 – 10 – 2 – 11",
-    "Pronostic de démonstration à remplacer."
+  max: 10,
+
+  idleTimeoutMillis: 30000,
+
+  connectionTimeoutMillis: 10000,
+
+  ssl: isProduction
+    ? {
+        rejectUnauthorized: false
+      }
+    : false
+});
+
+/* =========================================================
+   TEST DATABASE
+========================================================= */
+
+pool.on("error", err => {
+  console.error(
+    "Erreur PostgreSQL inattendue :",
+    err
   );
-}
+});
 
 /* =========================================================
    MIDDLEWARE
@@ -249,45 +97,57 @@ app.use(
   })
 );
 
-app.use(
-  express.json()
-);
+app.use(express.json());
 
-app.set(
-  "trust proxy",
-  1
-);
+app.set("trust proxy", 1);
+
+/* =========================================================
+   SESSION POSTGRESQL
+========================================================= */
+
+const PgSession =
+  connectPgSimple(session);
 
 app.use(
   session({
+    store: new PgSession({
+      pool: pool,
+
+      tableName: "user_sessions",
+
+      createTableIfMissing: true,
+
+      pruneSessionInterval: 900
+    }),
+
     secret: SESSION_SECRET,
+
     resave: false,
+
     saveUninitialized: false,
 
     cookie: {
       httpOnly: true,
+
       sameSite: "lax",
-      secure:
-        process.env.NODE_ENV ===
-        "production",
+
+      secure: isProduction,
+
       maxAge:
-        7 * 24 * 60 * 60 * 1000
+        7 *
+        24 *
+        60 *
+        60 *
+        1000
     }
   })
 );
 
-app.use(
-  express.static(
-    path.join(__dirname, "public")
-  )
-);
-
 /* =========================================================
-   UTILITAIRES
+   UTILITAIRE HTML
 ========================================================= */
 
 function safe(value) {
-
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -296,52 +156,144 @@ function safe(value) {
     .replace(/'/g, "&#039;");
 }
 
-function formatDate(value) {
+/* =========================================================
+   DATE
+========================================================= */
 
+function formatDate(value) {
   if (!value) {
     return "";
   }
 
-  return new Date(
-    value + "T00:00:00"
-  ).toLocaleDateString(
-    "fr-FR"
+  const date =
+    new Date(
+      `${String(value).slice(0, 10)}T00:00:00`
+    );
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleDateString(
+    "fr-FR",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    }
   );
 }
+
+/* =========================================================
+   DATE DU JOUR FRANCE
+========================================================= */
 
 function todayString() {
+  const parts =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: "Europe/Paris",
 
-  return new Date()
-    .toISOString()
-    .slice(0, 10);
+        year: "numeric",
+
+        month: "2-digit",
+
+        day: "2-digit"
+      }
+    ).formatToParts(new Date());
+
+  const result = {};
+
+  for (const part of parts) {
+    result[part.type] = part.value;
+  }
+
+  return `${result.year}-${result.month}-${result.day}`;
 }
 
-function isVip(user) {
+/* =========================================================
+   VIP
+========================================================= */
 
-  return !!(
-    user &&
-    user.vip_until &&
-    new Date(user.vip_until) >
-      new Date()
+function isVip(user) {
+  if (!user) {
+    return false;
+  }
+
+  if (!user.vip_until) {
+    return false;
+  }
+
+  const expiration =
+    new Date(user.vip_until);
+
+  return (
+    !Number.isNaN(expiration.getTime()) &&
+    expiration > new Date()
   );
+}
+
+/* =========================================================
+   AUTHENTIFICATION
+========================================================= */
+
+function auth(req, res, next) {
+  if (!req.session.userId) {
+    return res.redirect("/connexion");
+  }
+
+  next();
+}
+
+/* =========================================================
+   ADMIN
+========================================================= */
+
+function admin(req, res, next) {
+  if (
+    !req.session.userId ||
+    req.session.role !== "admin"
+  ) {
+    return res.status(403).send(
+      page(
+        req,
+        "Accès refusé",
+        `
+        <div class="card">
+
+          <h1>🔒 Accès refusé</h1>
+
+          <p>
+            Accès administrateur requis.
+          </p>
+
+          <a
+            class="btn"
+            href="/connexion"
+          >
+            Se connecter
+          </a>
+
+        </div>
+        `
+      )
+    );
+  }
+
+  next();
 }
 
 /* =========================================================
    PAGE PRINCIPALE
 ========================================================= */
 
-function page(
-  req,
-  title,
-  body
-) {
-
+function page(req, title, body) {
   const logged =
     !!req.session.userId;
 
   const isAdmin =
-    req.session.role ===
-    "admin";
+    req.session.role === "admin";
 
   return `
 <!doctype html>
@@ -357,10 +309,13 @@ function page(
   content="width=device-width,initial-scale=1"
 >
 
+<meta
+  name="description"
+  content="Spécial Quinté Français — Pronostics hippiques VIP"
+>
+
 <title>
-${safe(title)}
-—
-Spécial Quinté Français
+${safe(title)} — Spécial Quinté Français
 </title>
 
 <style>
@@ -369,45 +324,81 @@ Spécial Quinté Français
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
   background: #f5f7fa;
+
   color: #222;
+
+  line-height: 1.5;
 }
 
 header {
   background: #111827;
+
   color: white;
+
   padding: 18px;
+}
+
+.header-inner {
+  max-width: 1100px;
+
+  margin: auto;
 }
 
 .logo {
   color: white;
+
   text-decoration: none;
+
   font-weight: bold;
-  font-size: 20px;
+
+  font-size: 21px;
+
+  display: inline-block;
 }
 
 .logo small {
   display: block;
+
   font-size: 12px;
+
   margin-top: 3px;
+
   letter-spacing: 2px;
 }
 
 nav {
   margin-top: 15px;
+
   display: flex;
+
   flex-wrap: wrap;
+
   gap: 8px;
 }
 
 nav a {
   color: white;
+
   text-decoration: none;
-  padding: 8px 10px;
+
+  padding: 9px 11px;
+
   border-radius: 6px;
+
+  font-size: 14px;
 }
 
 nav a:hover {
@@ -416,40 +407,77 @@ nav a:hover {
 
 main {
   max-width: 1100px;
+
   margin: auto;
+
   padding: 25px 15px;
+
+  min-height: 65vh;
 }
 
 footer {
   text-align: center;
+
   padding: 30px 15px;
+
   color: #666;
 }
 
-.hero,
-.card,
-.formbox,
-.plan,
-.archive-card,
-.archive-header {
+.hero {
   background: white;
-  padding: 22px;
+
+  padding: 35px 25px;
+
   border-radius: 14px;
+
   margin-bottom: 20px;
+
+  text-align: center;
+
   box-shadow:
-    0 3px 15px rgba(0,0,0,.08);
+    0 3px 15px rgba(0,0,0,.06);
 }
 
-.hero {
-  text-align: center;
-  padding: 30px;
+.hero h1 {
+  margin-top: 0;
+}
+
+.card,
+.formbox,
+.plan {
+  background: white;
+
+  padding: 22px;
+
+  border-radius: 12px;
+
+  box-shadow:
+    0 3px 15px rgba(0,0,0,.08);
+
+  margin-bottom: 20px;
+}
+
+.grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(280px,1fr)
+    );
+
+  gap: 20px;
 }
 
 .race {
   margin: 25px 0;
+
   padding: 22px;
+
   border-radius: 12px;
+
   background: #111827;
+
   color: white;
 }
 
@@ -457,57 +485,138 @@ footer {
 .race strong,
 .race span {
   display: block;
+
   margin: 8px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns:
-    repeat(auto-fit,minmax(280px,1fr));
-  gap: 20px;
+.locked {
+  background: #f3f4f6;
+
+  padding: 30px 20px;
+
+  border-radius: 12px;
+
+  text-align: center;
+
+  margin-top: 20px;
 }
 
-.picks,
-.archive-picks,
-.bet-grid {
+.lock-icon {
+  font-size: 45px;
+
+  margin-bottom: 10px;
+}
+
+.picks {
   display: grid;
+
   grid-template-columns:
-    repeat(auto-fit,minmax(180px,1fr));
+    repeat(
+      auto-fit,
+      minmax(180px,1fr)
+    );
+
   gap: 12px;
+
   margin: 20px 0;
 }
 
-.picks b,
-.archive-pick,
-.bet-card {
+.picks b {
   padding: 18px;
+
   border-radius: 10px;
+
   background: #eef2ff;
+
   text-align: center;
 }
 
-.picks span,
-.bet-card .horses,
-.archive-pick span {
+.picks span {
   display: block;
-  font-size: 20px;
-  font-weight: bold;
+
+  font-size: 21px;
+
   margin-top: 8px;
+}
+
+.bet-grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(220px,1fr)
+    );
+
+  gap: 15px;
+
+  margin-top: 20px;
+}
+
+.bet-card {
+  background: #eef2ff;
+
+  padding: 20px;
+
+  border-radius: 12px;
+
+  text-align: center;
 }
 
 .bet-card h3 {
   margin-top: 0;
 }
 
+.bet-card .horses {
+  display: block;
+
+  font-size: 21px;
+
+  font-weight: bold;
+
+  margin-top: 10px;
+}
+
+.notice {
+  background: #fff7ed;
+
+  padding: 15px;
+
+  border-radius: 8px;
+
+  margin-top: 15px;
+}
+
+.vip {
+  background: #fef3c7;
+
+  padding: 15px;
+
+  border-radius: 8px;
+}
+
 .btn {
   display: inline-block;
-  border: 0;
+
+  border: none;
+
   background: #111827;
+
   color: white;
+
   text-decoration: none;
+
   padding: 11px 18px;
+
   border-radius: 7px;
+
   cursor: pointer;
+
+  font-size: 14px;
+}
+
+.btn:hover {
+  opacity: .88;
 }
 
 .success {
@@ -518,9 +627,15 @@ footer {
   background: #b91c1c;
 }
 
+.secondary {
+  background: #4b5563;
+}
+
 label {
   display: block;
+
   margin-bottom: 15px;
+
   font-weight: bold;
 }
 
@@ -528,65 +643,179 @@ input,
 textarea,
 select {
   width: 100%;
+
   padding: 11px;
+
   margin-top: 6px;
+
   border: 1px solid #ccc;
+
   border-radius: 7px;
+
   font-size: 15px;
+
+  font-family: inherit;
 }
 
 textarea {
   min-height: 100px;
+
+  resize: vertical;
+}
+
+button {
+  font-family: inherit;
+}
+
+hr {
+  border: 0;
+
+  border-top: 1px solid #ddd;
+
+  margin: 25px 0;
 }
 
 .row {
   background: #f9fafb;
+
   padding: 15px;
+
   margin: 10px 0;
+
   border-radius: 8px;
 }
 
 .admin-actions {
   display: flex;
+
   flex-wrap: wrap;
+
   gap: 8px;
+
   margin-top: 10px;
 }
 
-.notice,
-.vip {
-  background: #fff7ed;
-  padding: 15px;
-  border-radius: 8px;
-}
+.archive-card {
+  background: white;
 
-.locked {
-  text-align: center;
-  background: #f3f4f6;
-  padding: 25px;
-  border-radius: 12px;
-  margin-top: 20px;
-}
+  padding: 22px;
 
-.lock-icon {
-  font-size: 40px;
+  border-radius: 14px;
+
+  margin-bottom: 20px;
+
+  box-shadow:
+    0 3px 15px rgba(0,0,0,.08);
 }
 
 .archive-date {
   color: #555;
+
   font-size: 14px;
+
   margin-bottom: 8px;
 }
 
 .archive-title {
+  margin-top: 0;
+
   color: #111827;
 }
 
 .archive-info {
   background: #f9fafb;
+
   padding: 12px;
+
   border-radius: 8px;
+
   margin: 12px 0;
+}
+
+.archive-picks {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(150px,1fr)
+    );
+
+  gap: 10px;
+
+  margin-top: 15px;
+}
+
+.archive-pick {
+  background: #eef2ff;
+
+  padding: 14px;
+
+  border-radius: 8px;
+
+  text-align: center;
+}
+
+.archive-pick strong {
+  display: block;
+
+  margin-bottom: 7px;
+}
+
+.archive-pick span {
+  font-size: 20px;
+
+  font-weight: bold;
+}
+
+.archive-notes {
+  background: #fff7ed;
+
+  padding: 14px;
+
+  border-radius: 8px;
+
+  margin-top: 15px;
+}
+
+.archive-header {
+  text-align: center;
+
+  background: white;
+
+  padding: 25px;
+
+  border-radius: 14px;
+
+  margin-bottom: 20px;
+}
+
+.status-pending {
+  color: #92400e;
+
+  font-weight: bold;
+}
+
+.status-confirmed {
+  color: #166534;
+
+  font-weight: bold;
+}
+
+.status-rejected {
+  color: #b91c1c;
+
+  font-weight: bold;
+}
+
+.small {
+  font-size: 13px;
+
+  color: #666;
+}
+
+.center {
+  text-align: center;
 }
 
 @media(max-width:600px) {
@@ -595,11 +824,24 @@ textarea {
     padding: 15px 10px;
   }
 
-  .hero {
-    padding: 20px 15px;
+  header {
+    padding: 15px 12px;
   }
 
-  .picks,
+  .hero {
+    padding: 25px 15px;
+  }
+
+  .card,
+  .formbox,
+  .archive-card {
+    padding: 17px;
+  }
+
+  .picks {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .archive-picks {
     grid-template-columns: 1fr 1fr;
   }
@@ -618,6 +860,8 @@ textarea {
 
 <header>
 
+<div class="header-inner">
+
 <a
   class="logo"
   href="/"
@@ -627,7 +871,6 @@ textarea {
 <small>
 FRANÇAIS
 </small>
-
 </a>
 
 <nav>
@@ -688,6 +931,8 @@ ${
 
 </nav>
 
+</div>
+
 </header>
 
 <main>
@@ -709,55 +954,554 @@ ${body}
 }
 
 /* =========================================================
-   AUTH
+   INITIALISATION DATABASE
 ========================================================= */
 
-function auth(
-  req,
-  res,
-  next
-) {
+async function initializeDatabase() {
 
-  if (!req.session.userId) {
-    return res.redirect(
-      "/connexion"
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+
+      name TEXT NOT NULL,
+
+      email TEXT UNIQUE NOT NULL,
+
+      phone TEXT NOT NULL,
+
+      password_hash TEXT NOT NULL,
+
+      role TEXT NOT NULL DEFAULT 'member',
+
+      vip_until TIMESTAMPTZ,
+
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payments (
+      id BIGSERIAL PRIMARY KEY,
+
+      user_id BIGINT NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+      plan TEXT NOT NULL,
+
+      amount_eur INTEGER NOT NULL,
+
+      phone TEXT NOT NULL,
+
+      transaction_ref TEXT,
+
+      status TEXT NOT NULL DEFAULT 'pending',
+
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+      confirmed_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tips (
+      id BIGSERIAL PRIMARY KEY,
+
+      race_date DATE NOT NULL,
+
+      title TEXT NOT NULL,
+
+      start_time TEXT NOT NULL,
+
+      course TEXT NOT NULL,
+
+      distance TEXT NOT NULL,
+
+      runners INTEGER NOT NULL,
+
+      bases TEXT NOT NULL,
+
+      second_chances TEXT NOT NULL,
+
+      outsiders TEXT NOT NULL,
+
+      replacement TEXT,
+
+      tierce TEXT,
+
+      quarte TEXT,
+
+      quinte TEXT,
+
+      notes TEXT,
+
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+      updated_at TIMESTAMPTZ
+        NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  /*
+     Compatibilité si certaines colonnes
+     n'existent pas encore dans une ancienne
+     table PostgreSQL.
+  */
+
+  await pool.query(`
+    ALTER TABLE tips
+    ADD COLUMN IF NOT EXISTS tierce TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE tips
+    ADD COLUMN IF NOT EXISTS quarte TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE tips
+    ADD COLUMN IF NOT EXISTS quinte TEXT;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS
+    idx_tips_race_date
+    ON tips(race_date DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS
+    idx_payments_user_id
+    ON payments(user_id);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS
+    idx_payments_status
+    ON payments(status);
+  `);
+
+  /*
+     Création / mise à jour du compte admin.
+  */
+
+  const adminHash =
+    await bcrypt.hash(
+      ADMIN_PASSWORD,
+      12
+    );
+
+  const adminResult =
+    await pool.query(
+      `
+      SELECT id
+      FROM users
+      WHERE LOWER(email) = LOWER($1)
+      LIMIT 1
+      `,
+      [ADMIN_EMAIL]
+    );
+
+  if (adminResult.rows.length === 0) {
+
+    await pool.query(
+      `
+      INSERT INTO users
+      (
+        name,
+        email,
+        phone,
+        password_hash,
+        role
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3,
+        $4,
+        'admin'
+      )
+      `,
+      [
+        "Administrateur",
+        ADMIN_EMAIL,
+        "0000000000",
+        adminHash
+      ]
+    );
+
+    console.log(
+      "Compte administrateur créé : " +
+      ADMIN_EMAIL
+    );
+
+  } else {
+
+    await pool.query(
+      `
+      UPDATE users
+      SET
+        password_hash = $1,
+        role = 'admin'
+      WHERE LOWER(email) = LOWER($2)
+      `,
+      [
+        adminHash,
+        ADMIN_EMAIL
+      ]
+    );
+
+    console.log(
+      "Compte administrateur vérifié : " +
+      ADMIN_EMAIL
     );
   }
 
-  next();
+  console.log(
+    "Base PostgreSQL initialisée."
+  );
 }
 
-function adminOnly(
-  req,
-  res,
-  next
-) {
+/* =========================================================
+   ACCUEIL
+========================================================= */
 
-  if (
-    !req.session.userId ||
-    req.session.role !== "admin"
-  ) {
+app.get("/", async (req, res) => {
 
-    return res.status(403).send(
+  /*
+     IMPORTANT :
+     L'accueil ne récupère AUCUN pronostic.
+     Aucun numéro de cheval n'est affiché ici.
+  */
+
+  res.send(
+    page(
+      req,
+      "Accueil",
+      `
+
+<section class="hero">
+
+<h1>
+♞ SPÉCIAL QUINTÉ FRANÇAIS
+</h1>
+
+<h2>
+Pronostics hippiques VIP
+</h2>
+
+<p>
+Retrouvez chaque jour notre sélection
+réservée aux membres VIP.
+</p>
+
+<div class="locked">
+
+<div class="lock-icon">
+🔐
+</div>
+
+<h3>
+Le pronostic du jour est réservé aux membres VIP
+</h3>
+
+<p>
+Les Bases, Secondes chances, Outsiders,
+Tiercé, Quarté et Quinté ne sont
+<strong>jamais affichés sur l'accueil</strong>.
+</p>
+
+<a
+class="btn"
+href="/abonnement"
+>
+👑 Accéder au VIP
+</a>
+
+</div>
+
+</section>
+
+<div class="grid">
+
+<div class="card">
+
+<h2>
+🔒 Pronostic VIP
+</h2>
+
+<p>
+Accédez à la sélection complète
+après activation de votre abonnement.
+</p>
+
+<a
+class="btn"
+href="/pronostic"
+>
+Voir le Pronostic VIP
+</a>
+
+</div>
+
+<div class="card">
+
+<h2>
+🗂️ Archives
+</h2>
+
+<p>
+Les archives restent accessibles
+librement aux visiteurs.
+</p>
+
+<a
+class="btn"
+href="/archives"
+>
+Voir les archives
+</a>
+
+</div>
+
+<div class="card">
+
+<h2>
+👑 Abonnement VIP
+</h2>
+
+<p>
+VIP 15 jours :
+<strong>70 €</strong>
+</p>
+
+<p>
+VIP 1 mois :
+<strong>100 €</strong>
+</p>
+
+<a
+class="btn"
+href="/abonnement"
+>
+Voir les abonnements
+</a>
+
+</div>
+
+</div>
+
+`
+    )
+  );
+});
+
+/* =========================================================
+   ARCHIVES
+   ACCESSIBLES À TOUS
+========================================================= */
+
+app.get("/archives", async (req, res) => {
+
+  try {
+
+    const result =
+      await pool.query(
+        `
+        SELECT *
+        FROM tips
+        WHERE race_date <
+          (
+            CURRENT_TIMESTAMP
+            AT TIME ZONE 'Europe/Paris'
+          )::date
+        ORDER BY
+          race_date DESC,
+          id DESC
+        `
+      );
+
+    const archives =
+      result.rows;
+
+    let content = `
+
+<div class="archive-header">
+
+<h1>
+🗂️ ARCHIVES DES PRONOSTICS
+</h1>
+
+<p>
+Retrouvez les anciens pronostics de
+<b>Spécial Quinté Français</b>.
+</p>
+
+</div>
+
+`;
+
+    if (!archives.length) {
+
+      content += `
+
+<div class="card center">
+
+<h2>
+Aucune archive pour le moment
+</h2>
+
+<p>
+Les anciens pronostics apparaîtront
+automatiquement ici après leur date de course.
+</p>
+
+</div>
+
+`;
+
+    } else {
+
+      content +=
+        archives
+          .map(t => {
+
+            return `
+
+<div class="archive-card">
+
+<div class="archive-date">
+
+📅
+${formatDate(t.race_date)}
+
+•
+🕐
+${safe(t.start_time)}
+
+</div>
+
+<h2 class="archive-title">
+${safe(t.title)}
+</h2>
+
+<div class="archive-info">
+
+🏇
+<b>${safe(t.course)}</b>
+
+•
+${safe(t.distance)}
+
+•
+${safe(t.runners)} partants
+
+</div>
+
+<div class="archive-picks">
+
+<div class="archive-pick">
+
+<strong>
+BASES
+</strong>
+
+<span>
+${safe(t.bases)}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+SECONDES CHANCES
+</strong>
+
+<span>
+${safe(t.second_chances)}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+OUTSIDERS
+</strong>
+
+<span>
+${safe(t.outsiders)}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+REMPLAÇANT
+</strong>
+
+<span>
+${safe(t.replacement || "-")}
+</span>
+
+</div>
+
+</div>
+
+<br>
+
+<a
+class="btn"
+href="/archives/${t.id}"
+>
+Voir le pronostic complet
+</a>
+
+</div>
+
+`;
+
+          })
+          .join("");
+    }
+
+    res.send(
       page(
         req,
-        "Accès refusé",
+        "Archives",
+        content
+      )
+    );
+
+  } catch (err) {
+
+    console.error(
+      "Erreur archives :",
+      err
+    );
+
+    res.status(500).send(
+      page(
+        req,
+        "Erreur",
         `
-        <div class="formbox">
+        <div class="card">
 
           <h1>
-            🔒 Accès refusé
+            Erreur lors du chargement des archives
           </h1>
-
-          <p>
-            Accès administrateur requis.
-          </p>
 
           <a
             class="btn"
-            href="/connexion"
+            href="/"
           >
-            Se connecter
+            Accueil
           </a>
 
         </div>
@@ -765,17 +1509,1595 @@ function adminOnly(
       )
     );
   }
-
-  next();
-}
+});
 
 /* =========================================================
-   AFFICHAGE PRONOSTIC
+   DETAIL ARCHIVE
 ========================================================= */
 
-function tipFields(t) {
+app.get(
+  "/archives/:id",
+  async (req, res) => {
 
-  return `
+    try {
+
+      const result =
+        await pool.query(
+          `
+          SELECT *
+          FROM tips
+          WHERE id = $1
+          `,
+          [req.params.id]
+        );
+
+      const t =
+        result.rows[0];
+
+      if (!t) {
+
+        return res.status(404).send(
+          page(
+            req,
+            "Archive introuvable",
+            `
+            <div class="card">
+
+              <h1>
+                Archive introuvable
+              </h1>
+
+              <a
+                class="btn"
+                href="/archives"
+              >
+                Retour aux archives
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      res.send(
+        page(
+          req,
+          "Archive",
+          `
+
+<div class="archive-card">
+
+<div class="archive-date">
+
+📅
+${formatDate(t.race_date)}
+
+•
+🕐
+${safe(t.start_time)}
+
+</div>
+
+<h1>
+${safe(t.title)}
+</h1>
+
+<div class="archive-info">
+
+🏇 Hippodrome :
+<b>
+${safe(t.course)}
+</b>
+
+<br><br>
+
+📏 Distance :
+<b>
+${safe(t.distance)}
+</b>
+
+<br><br>
+
+🐎 Partants :
+<b>
+${safe(t.runners)}
+</b>
+
+</div>
+
+<h2>
+🏇 Sélection
+</h2>
+
+<div class="archive-picks">
+
+<div class="archive-pick">
+
+<strong>
+BASES
+</strong>
+
+<span>
+${safe(t.bases)}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+SECONDES CHANCES
+</strong>
+
+<span>
+${safe(t.second_chances)}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+OUTSIDERS
+</strong>
+
+<span>
+${safe(t.outsiders)}
+</span>
+
+</div>
+
+<div class="archive-pick">
+
+<strong>
+REMPLAÇANT
+</strong>
+
+<span>
+${safe(t.replacement || "-")}
+</span>
+
+</div>
+
+</div>
+
+<h2>
+🎯 Jeux proposés
+</h2>
+
+<div class="bet-grid">
+
+<div class="bet-card">
+
+<h3>
+🏇 TIERCE
+</h3>
+
+<p>
+6 chevaux
+</p>
+
+<span class="horses">
+${safe(t.tierce || "-")}
+</span>
+
+</div>
+
+<div class="bet-card">
+
+<h3>
+🏇 QUARTE
+</h3>
+
+<p>
+7 chevaux
+</p>
+
+<span class="horses">
+${safe(t.quarte || "-")}
+</span>
+
+</div>
+
+<div class="bet-card">
+
+<h3>
+🏇 QUINTE
+</h3>
+
+<p>
+8 chevaux
+</p>
+
+<span class="horses">
+${safe(t.quinte || "-")}
+</span>
+
+</div>
+
+</div>
+
+${
+  t.notes
+    ? `
+      <div class="archive-notes">
+
+        📝
+        <b>Commentaire :</b>
+
+        <br><br>
+
+        ${safe(t.notes)}
+
+      </div>
+      `
+    : ""
+}
+
+<br>
+
+<a
+class="btn"
+href="/archives"
+>
+← Retour aux archives
+</a>
+
+</div>
+
+`
+        )
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur détail archive :",
+        err
+      );
+
+      res.status(500).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="card">
+
+            <h1>
+              Erreur serveur
+            </h1>
+
+            <a
+              class="btn"
+              href="/archives"
+            >
+              Retour aux archives
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+  }
+);
+
+/* =========================================================
+   INSCRIPTION
+========================================================= */
+
+app.get(
+  "/inscription",
+  (req, res) => {
+
+    res.send(
+      page(
+        req,
+        "Créer un compte",
+        `
+
+<div class="formbox">
+
+<h1>
+Créer un compte
+</h1>
+
+<form
+method="post"
+action="/inscription"
+>
+
+<label>
+
+Nom complet
+
+<input
+name="name"
+maxlength="100"
+required
+>
+
+</label>
+
+<label>
+
+E-mail
+
+<input
+type="email"
+name="email"
+maxlength="150"
+autocomplete="username"
+required
+>
+
+</label>
+
+<label>
+
+Téléphone
+
+<input
+name="phone"
+maxlength="30"
+required
+>
+
+</label>
+
+<label>
+
+Mot de passe
+
+<input
+type="password"
+name="password"
+minlength="8"
+maxlength="100"
+autocomplete="new-password"
+required
+>
+
+</label>
+
+<button
+class="btn"
+type="submit"
+>
+Créer mon compte
+</button>
+
+</form>
+
+</div>
+
+`
+      )
+    );
+  }
+);
+
+/* =========================================================
+   INSCRIPTION POST
+========================================================= */
+
+app.post(
+  "/inscription",
+  async (req, res) => {
+
+    try {
+
+      const name =
+        String(
+          req.body.name || ""
+        ).trim();
+
+      const email =
+        String(
+          req.body.email || ""
+        )
+          .trim()
+          .toLowerCase();
+
+      const phone =
+        String(
+          req.body.phone || ""
+        ).trim();
+
+      const password =
+        String(
+          req.body.password || ""
+        );
+
+      if (
+        !name ||
+        !email ||
+        !phone ||
+        !password ||
+        password.length < 8
+      ) {
+
+        return res.status(400).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                ❌ Données invalides
+              </h1>
+
+              <p>
+                Veuillez remplir correctement
+                tous les champs.
+              </p>
+
+              <a
+                class="btn"
+                href="/inscription"
+              >
+                Retour
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      const hash =
+        await bcrypt.hash(
+          password,
+          12
+        );
+
+      const result =
+        await pool.query(
+          `
+          INSERT INTO users
+          (
+            name,
+            email,
+            phone,
+            password_hash,
+            role
+          )
+          VALUES
+          (
+            $1,
+            $2,
+            $3,
+            $4,
+            'member'
+          )
+          RETURNING id, role
+          `,
+          [
+            name,
+            email,
+            phone,
+            hash
+          ]
+        );
+
+      const user =
+        result.rows[0];
+
+      req.session.regenerate(
+        err => {
+
+          if (err) {
+
+            console.error(err);
+
+            return res.status(500).send(
+              "Erreur de session."
+            );
+          }
+
+          req.session.userId =
+            Number(user.id);
+
+          req.session.role =
+            user.role;
+
+          req.session.save(
+            saveErr => {
+
+              if (saveErr) {
+
+                console.error(saveErr);
+
+                return res.status(500).send(
+                  "Erreur de sauvegarde de session."
+                );
+              }
+
+              res.redirect(
+                "/abonnement"
+              );
+            }
+          );
+        }
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur inscription :",
+        err
+      );
+
+      res.status(400).send(
+        page(
+          req,
+          "Erreur",
+          `
+
+<div class="card">
+
+<h1>
+❌ Inscription impossible
+</h1>
+
+<p>
+Cette adresse e-mail existe déjà
+ou les informations sont invalides.
+</p>
+
+<a
+class="btn"
+href="/connexion"
+>
+Se connecter
+</a>
+
+</div>
+
+`
+        )
+      );
+    }
+  }
+);
+
+/* =========================================================
+   CONNEXION
+========================================================= */
+
+app.get(
+  "/connexion",
+  (req, res) => {
+
+    res.send(
+      page(
+        req,
+        "Connexion",
+        `
+
+<div class="formbox">
+
+<h1>
+Connexion
+</h1>
+
+<form
+method="post"
+action="/connexion"
+>
+
+<label>
+
+E-mail
+
+<input
+type="email"
+name="email"
+autocomplete="username"
+required
+>
+
+</label>
+
+<label>
+
+Mot de passe
+
+<input
+type="password"
+name="password"
+autocomplete="current-password"
+required
+>
+
+</label>
+
+<button
+class="btn"
+type="submit"
+>
+Se connecter
+</button>
+
+</form>
+
+<p>
+Pas encore de compte ?
+<a href="/inscription">
+Créer un compte
+</a>
+</p>
+
+</div>
+
+`
+      )
+    );
+  }
+);
+
+/* =========================================================
+   CONNEXION POST
+========================================================= */
+
+app.post(
+  "/connexion",
+  async (req, res) => {
+
+    try {
+
+      const email =
+        String(
+          req.body.email || ""
+        )
+          .trim()
+          .toLowerCase();
+
+      const password =
+        String(
+          req.body.password || ""
+        );
+
+      const result =
+        await pool.query(
+          `
+          SELECT *
+          FROM users
+          WHERE LOWER(email) = LOWER($1)
+          LIMIT 1
+          `,
+          [email]
+        );
+
+      const user =
+        result.rows[0];
+
+      if (
+        !user ||
+        !await bcrypt.compare(
+          password,
+          user.password_hash
+        )
+      ) {
+
+        return res.status(401).send(
+          page(
+            req,
+            "Connexion",
+            `
+
+<div class="formbox">
+
+<h1>
+❌ Connexion refusée
+</h1>
+
+<p>
+L'adresse e-mail ou le mot de passe
+est incorrect.
+</p>
+
+<a
+class="btn"
+href="/connexion"
+>
+Réessayer
+</a>
+
+</div>
+
+`
+          )
+        );
+      }
+
+      req.session.regenerate(
+        err => {
+
+          if (err) {
+
+            console.error(
+              "Erreur session :",
+              err
+            );
+
+            return res.status(500).send(
+              "Erreur de session."
+            );
+          }
+
+          req.session.userId =
+            Number(user.id);
+
+          req.session.role =
+            user.role;
+
+          req.session.save(
+            saveError => {
+
+              if (saveError) {
+
+                console.error(
+                  "Erreur sauvegarde session :",
+                  saveError
+                );
+
+                return res.status(500).send(
+                  "Erreur lors de la sauvegarde de la session."
+                );
+              }
+
+              if (
+                user.role === "admin"
+              ) {
+
+                return res.redirect(
+                  "/admin"
+                );
+              }
+
+              res.redirect(
+                "/compte"
+              );
+            }
+          );
+        }
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur connexion :",
+        err
+      );
+
+      res.status(500).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="card">
+
+            <h1>
+              Erreur serveur
+            </h1>
+
+            <a
+              class="btn"
+              href="/connexion"
+            >
+              Réessayer
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+  }
+);
+
+/* =========================================================
+   DECONNEXION
+========================================================= */
+
+app.get(
+  "/deconnexion",
+  (req, res) => {
+
+    req.session.destroy(
+      err => {
+
+        if (err) {
+          console.error(err);
+        }
+
+        res.clearCookie(
+          "connect.sid"
+        );
+
+        res.redirect("/");
+      }
+    );
+  }
+);
+
+/* =========================================================
+   ABONNEMENT
+========================================================= */
+
+app.get(
+  "/abonnement",
+  auth,
+  (req, res) => {
+
+    res.send(
+      page(
+        req,
+        "Abonnement",
+        `
+
+<div class="grid">
+
+<div class="card">
+
+<h1>
+👑 Choisissez votre abonnement VIP
+</h1>
+
+<div class="plan">
+
+<h2>
+VIP 15 JOURS
+</h2>
+
+<strong>
+70 €
+</strong>
+
+<br><br>
+
+<a
+class="btn"
+href="/payer?plan=15"
+>
+Payer avec Orange Money
+</a>
+
+</div>
+
+<div class="plan">
+
+<h2>
+VIP 1 MOIS
+</h2>
+
+<strong>
+100 €
+</strong>
+
+<br><br>
+
+<a
+class="btn"
+href="/payer?plan=30"
+>
+Payer avec Orange Money
+</a>
+
+</div>
+
+</div>
+
+<div class="card">
+
+<h2>
+ℹ️ Paiement Orange Money
+</h2>
+
+<p>
+Après votre paiement, indiquez votre
+référence de transaction.
+</p>
+
+<p>
+L'administrateur vérifie le paiement
+puis active votre accès VIP.
+</p>
+
+</div>
+
+</div>
+
+`
+      )
+    );
+  }
+);
+
+/* =========================================================
+   PAIEMENT GET
+========================================================= */
+
+app.get(
+  "/payer",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const plan =
+        req.query.plan === "30"
+          ? "30"
+          : "15";
+
+      const amount =
+        plan === "30"
+          ? 100
+          : 70;
+
+      const result =
+        await pool.query(
+          `
+          SELECT *
+          FROM users
+          WHERE id = $1
+          `,
+          [req.session.userId]
+        );
+
+      const user =
+        result.rows[0];
+
+      if (!user) {
+        return res.redirect(
+          "/deconnexion"
+        );
+      }
+
+      res.send(
+        page(
+          req,
+          "Paiement",
+          `
+
+<div class="formbox">
+
+<h1>
+💳 Paiement Orange Money
+</h1>
+
+<p>
+
+Abonnement :
+
+<b>
+${
+  plan === "30"
+    ? "1 mois"
+    : "15 jours"
+}
+</b>
+
+—
+
+<b>
+${amount} €
+</b>
+
+</p>
+
+<div class="notice">
+
+Numéro Orange Money :
+
+<br>
+
+<b>
+${safe(ORANGE_MONEY_NUMBER)}
+</b>
+
+<br><br>
+
+Nom :
+
+<br>
+
+<b>
+${safe(ORANGE_MONEY_NAME)}
+</b>
+
+</div>
+
+<form
+method="post"
+action="/payer"
+>
+
+<input
+type="hidden"
+name="plan"
+value="${plan}"
+>
+
+<label>
+
+Numéro Orange Money utilisé
+
+<input
+name="phone"
+value="${safe(user.phone)}"
+maxlength="30"
+required
+>
+
+</label>
+
+<label>
+
+Référence / ID de transaction
+
+<input
+name="transaction_ref"
+maxlength="100"
+required
+>
+
+</label>
+
+<button
+class="btn"
+type="submit"
+>
+Envoyer la demande
+</button>
+
+</form>
+
+</div>
+
+`
+        )
+      );
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).send(
+        "Erreur serveur."
+      );
+    }
+  }
+);
+
+/* =========================================================
+   PAIEMENT POST
+========================================================= */
+
+app.post(
+  "/payer",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const plan =
+        req.body.plan === "30"
+          ? "30"
+          : "15";
+
+      const amount =
+        plan === "30"
+          ? 100
+          : 70;
+
+      const phone =
+        String(
+          req.body.phone || ""
+        ).trim();
+
+      const transactionRef =
+        String(
+          req.body.transaction_ref || ""
+        ).trim();
+
+      if (
+        !phone ||
+        !transactionRef
+      ) {
+
+        return res.status(400).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                ❌ Informations manquantes
+              </h1>
+
+              <a
+                class="btn"
+                href="/abonnement"
+              >
+                Retour
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      const duplicate =
+        await pool.query(
+          `
+          SELECT id
+          FROM payments
+          WHERE transaction_ref = $1
+          LIMIT 1
+          `,
+          [transactionRef]
+        );
+
+      if (duplicate.rows.length) {
+
+        return res.status(400).send(
+          page(
+            req,
+            "Paiement",
+            `
+
+<div class="card">
+
+<h1>
+⚠️ Référence déjà utilisée
+</h1>
+
+<p>
+Cette référence de transaction
+a déjà été enregistrée.
+</p>
+
+<a
+class="btn"
+href="/compte"
+>
+Mon compte
+</a>
+
+</div>
+
+`
+          )
+        );
+      }
+
+      await pool.query(
+        `
+        INSERT INTO payments
+        (
+          user_id,
+          plan,
+          amount_eur,
+          phone,
+          transaction_ref,
+          status
+        )
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          'pending'
+        )
+        `,
+        [
+          req.session.userId,
+          plan,
+          amount,
+          phone,
+          transactionRef
+        ]
+      );
+
+      res.send(
+        page(
+          req,
+          "Paiement envoyé",
+          `
+
+<div class="formbox">
+
+<h1>
+Demande reçue ✅
+</h1>
+
+<p>
+Votre demande de paiement a été enregistrée.
+</p>
+
+<p>
+Après confirmation par l'administrateur,
+votre accès VIP sera activé.
+</p>
+
+<a
+class="btn"
+href="/compte"
+>
+Mon compte
+</a>
+
+</div>
+
+`
+        )
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur paiement :",
+        err
+      );
+
+      res.status(500).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="card">
+
+            <h1>
+              ❌ Erreur lors du paiement
+            </h1>
+
+            <p>
+              Veuillez réessayer.
+            </p>
+
+          </div>
+          `
+        )
+      );
+    }
+  }
+);
+
+/* =========================================================
+   COMPTE
+========================================================= */
+
+app.get(
+  "/compte",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const userResult =
+        await pool.query(
+          `
+          SELECT *
+          FROM users
+          WHERE id = $1
+          `,
+          [req.session.userId]
+        );
+
+      const user =
+        userResult.rows[0];
+
+      if (!user) {
+
+        return req.session.destroy(
+          () => res.redirect(
+            "/connexion"
+          )
+        );
+      }
+
+      const paymentsResult =
+        await pool.query(
+          `
+          SELECT *
+          FROM payments
+          WHERE user_id = $1
+          ORDER BY id DESC
+          `,
+          [user.id]
+        );
+
+      const payments =
+        paymentsResult.rows;
+
+      const active =
+        isVip(user);
+
+      res.send(
+        page(
+          req,
+          "Mon compte",
+          `
+
+<div class="card">
+
+<h1>
+Bonjour ${safe(user.name)}
+</h1>
+
+<p>
+${safe(user.email)}
+•
+${safe(user.phone)}
+</p>
+
+<h2>
+Statut :
+${
+  active
+    ? "🟢 VIP actif"
+    : "⚪ Non abonné"
+}
+</h2>
+
+${
+  active
+    ? `
+
+<div class="vip">
+
+<p>
+
+Votre accès VIP expire le :
+
+<b>
+${new Date(
+  user.vip_until
+).toLocaleString(
+  "fr-FR"
+)}
+</b>
+
+</p>
+
+<a
+class="btn"
+href="/pronostic"
+>
+🔐 Accéder au pronostic
+</a>
+
+</div>
+
+`
+    : `
+
+<a
+class="btn"
+href="/abonnement"
+>
+👑 Choisir un abonnement
+</a>
+
+`
+}
+
+<h2>
+💳 Mes paiements
+</h2>
+
+${
+  payments.length
+    ? payments
+        .map(p => {
+
+          const statusClass =
+            p.status === "confirmed"
+              ? "status-confirmed"
+              : p.status === "rejected"
+              ? "status-rejected"
+              : "status-pending";
+
+          return `
+
+<div class="row">
+
+<b>
+Commande #${p.id}
+</b>
+
+<br>
+
+Abonnement :
+${p.plan === "30"
+  ? "1 mois"
+  : "15 jours"
+}
+
+<br>
+
+Montant :
+${p.amount_eur} €
+
+<br>
+
+Statut :
+<span class="${statusClass}">
+${safe(p.status)}
+</span>
+
+<br>
+
+Référence :
+${safe(
+  p.transaction_ref || "-"
+)}
+
+</div>
+
+`;
+
+        })
+        .join("")
+    : "<p>Aucun paiement.</p>"
+}
+
+</div>
+
+`
+        )
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur compte :",
+        err
+      );
+
+      res.status(500).send(
+        "Erreur serveur."
+      );
+    }
+  }
+);
+
+/* =========================================================
+   PRONOSTIC VIP
+========================================================= */
+
+app.get(
+  "/pronostic",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const userResult =
+        await pool.query(
+          `
+          SELECT *
+          FROM users
+          WHERE id = $1
+          `,
+          [req.session.userId]
+        );
+
+      const user =
+        userResult.rows[0];
+
+      if (!user) {
+        return res.redirect(
+          "/deconnexion"
+        );
+      }
+
+      if (
+        !isVip(user) &&
+        user.role !== "admin"
+      ) {
+
+        return res.redirect(
+          "/abonnement"
+        );
+      }
+
+      const result =
+        await pool.query(
+          `
+          SELECT *
+          FROM tips
+          ORDER BY
+            race_date DESC,
+            id DESC
+          LIMIT 1
+          `
+        );
+
+      const t =
+        result.rows[0];
+
+      if (!t) {
+
+        return res.send(
+          page(
+            req,
+            "Pronostic VIP",
+            `
+
+<div class="card center">
+
+<h1>
+🔐 PRONOSTIC VIP
+</h1>
+
+<h2>
+Aucun pronostic publié pour le moment.
+</h2>
+
+<p>
+L'administrateur pourra publier
+le prochain pronostic depuis l'espace Admin.
+</p>
+
+</div>
+
+`
+          )
+        );
+      }
+
+      res.send(
+        page(
+          req,
+          "Pronostic VIP",
+          `
+
+<div class="card">
+
+<h1>
+🔐 PRONOSTIC VIP
+</h1>
+
+<h2>
+${safe(t.title)}
+</h2>
+
+<p>
+
+📅
+${formatDate(t.race_date)}
+
+•
+
+🕐
+${safe(t.start_time)}
+
+•
+
+🏇
+${safe(t.course)}
+
+•
+
+📏
+${safe(t.distance)}
+
+•
+
+🐎
+${safe(t.runners)}
+partants
+
+</p>
 
 <div class="picks">
 
@@ -880,1537 +3202,477 @@ ${safe(t.quinte || "-")}
 ${
   t.notes
     ? `
-      <div class="notice">
-
-      📝
-      <b>
-      Commentaire :
-      </b>
-
-      <br><br>
-
-      ${safe(t.notes)}
-
-      </div>
-      `
-    : ""
-}
-
-`;
-}
-
-/* =========================================================
-   ACCUEIL
-   IMPORTANT :
-   AUCUN NUMÉRO DU PRONOSTIC N'EST AFFICHÉ ICI.
-========================================================= */
-
-app.get(
-  "/",
-  (req, res) => {
-
-    const t =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM tips
-          ORDER BY race_date DESC, id DESC
-          LIMIT 1
-          `
-        )
-        .get();
-
-    if (!t) {
-
-      return res.send(
-        page(
-          req,
-          "Accueil",
-          `
-          <div class="card">
-
-            <h1>
-              Aucun pronostic disponible.
-            </h1>
-
-          </div>
-          `
-        )
-      );
-    }
-
-    res.send(
-      page(
-        req,
-        "Accueil",
-        `
-
-<section class="hero">
-
-<h1>
-♞ SPÉCIAL QUINTÉ FRANÇAIS
-</h1>
-
-<p>
-Pronostics hippiques VIP — France
-</p>
-
-<div class="race">
-
-<b>
-QUINTÉ DU JOUR
-</b>
-
-<strong>
-${safe(t.title)}
-</strong>
-
-<span>
-
-${formatDate(t.race_date)}
-
-•
-
-${safe(t.start_time)}
-
-•
-
-${safe(t.runners)}
-partants
-
-•
-
-${safe(t.distance)}
-
-</span>
-
-</div>
-
-<div class="locked">
-
-<div class="lock-icon">
-🔐
-</div>
-
-<h3>
-Pronostic réservé aux membres VIP
-</h3>
-
-<p>
-La sélection complète n'est pas affichée
-sur l'accueil.
-</p>
-
-<a
-class="btn"
-href="/abonnement"
->
-👑 Accéder au VIP
-</a>
-
-</div>
-
-</section>
-
-<div class="grid">
-
-<div class="card">
-
-<h2>
-🔒 Pronostic du jour
-</h2>
-
-<p>
-Les Bases, Secondes chances, Outsiders,
-Tiercé, Quarté et Quinté sont réservés
-aux membres VIP.
-</p>
-
-<a
-class="btn"
-href="/abonnement"
->
-Voir les abonnements
-</a>
-
-</div>
-
-<div class="card">
-
-<h2>
-🗂️ Archives
-</h2>
-
-<p>
-Les anciennes sélections restent
-accessibles publiquement.
-</p>
-
-<a
-class="btn"
-href="/archives"
->
-Voir les archives
-</a>
-
-</div>
-
-<div class="card">
-
-<h2>
-👑 VIP
-</h2>
-
-<p>
-15 jours :
-<b>70 €</b>
-</p>
-
-<p>
-1 mois :
-<b>100 €</b>
-</p>
-
-<a
-class="btn"
-href="/abonnement"
->
-S'abonner
-</a>
-
-</div>
-
-</div>
-
-`
-      )
-    );
-  }
-);
-
-/* =========================================================
-   ARCHIVES PUBLIQUES
-========================================================= */
-
-app.get(
-  "/archives",
-  (req, res) => {
-
-    const rows =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM tips
-          WHERE race_date < ?
-          ORDER BY race_date DESC, id DESC
-          `
-        )
-        .all(
-          todayString()
-        );
-
-    let html = `
-
-<div class="archive-header">
-
-<h1>
-🗂️ ARCHIVES DES PRONOSTICS
-</h1>
-
-<p>
-Les archives sont visibles par tous les visiteurs.
-</p>
-
-</div>
-
-`;
-
-    if (!rows.length) {
-
-      html += `
-
-<div class="card">
-
-<h2>
-Aucune archive pour le moment
-</h2>
-
-<p>
-Les anciens pronostics apparaîtront
-automatiquement après leur date de course.
-</p>
-
-</div>
-
-`;
-
-    } else {
-
-      html += rows
-        .map(
-          t => `
-
-<div class="archive-card">
-
-<div class="archive-date">
-
-📅
-${formatDate(t.race_date)}
-
-•
-
-🕐
-${safe(t.start_time)}
-
-</div>
-
-<h2 class="archive-title">
-
-${safe(t.title)}
-
-</h2>
-
-<div class="archive-info">
-
-🏇
-<b>
-${safe(t.course)}
-</b>
-
-•
-
-${safe(t.distance)}
-
-•
-
-${safe(t.runners)}
-partants
-
-</div>
-
-<div class="archive-picks">
-
-<div class="archive-pick">
-
-<strong>
-BASES
-</strong>
-
-<span>
-${safe(t.bases)}
-</span>
-
-</div>
-
-<div class="archive-pick">
-
-<strong>
-SECONDES CHANCES
-</strong>
-
-<span>
-${safe(t.second_chances)}
-</span>
-
-</div>
-
-<div class="archive-pick">
-
-<strong>
-OUTSIDERS
-</strong>
-
-<span>
-${safe(t.outsiders)}
-</span>
-
-</div>
-
-<div class="archive-pick">
-
-<strong>
-REMPLAÇANT
-</strong>
-
-<span>
-${safe(t.replacement || "-")}
-</span>
-
-</div>
-
-</div>
-
-<br>
-
-<a
-class="btn"
-href="/archives/${t.id}"
->
-Voir le pronostic complet
-</a>
-
-</div>
-
-`
-        )
-        .join("");
-    }
-
-    res.send(
-      page(
-        req,
-        "Archives",
-        html
-      )
-    );
-  }
-);
-
-/* =========================================================
-   DÉTAIL ARCHIVE
-   PUBLIC
-========================================================= */
-
-app.get(
-  "/archives/:id",
-  (req, res) => {
-
-    const t =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM tips
-          WHERE id = ?
-          `
-        )
-        .get(
-          req.params.id
-        );
-
-    if (!t) {
-
-      return res.status(404).send(
-        page(
-          req,
-          "Archive introuvable",
-          `
-          <div class="card">
-
-            <h1>
-              Archive introuvable
-            </h1>
-
-            <a
-              class="btn"
-              href="/archives"
-            >
-              Retour aux archives
-            </a>
-
-          </div>
-          `
-        )
-      );
-    }
-
-    res.send(
-      page(
-        req,
-        "Archive",
-        `
-
-<div class="archive-card">
-
-<div class="archive-date">
-
-📅
-${formatDate(t.race_date)}
-
-•
-
-🕐
-${safe(t.start_time)}
-
-</div>
-
-<h1>
-${safe(t.title)}
-</h1>
-
-<div class="archive-info">
-
-🏇 Hippodrome :
-
-<b>
-${safe(t.course)}
-</b>
-
-<br><br>
-
-📏 Distance :
-
-<b>
-${safe(t.distance)}
-</b>
-
-<br><br>
-
-🐎 Partants :
-
-<b>
-${safe(t.runners)}
-</b>
-
-</div>
-
-${tipFields(t)}
-
-<br>
-
-<a
-class="btn"
-href="/archives"
->
-← Retour aux archives
-</a>
-
-</div>
-
-`
-      )
-    );
-  }
-);
-
-/* =========================================================
-   INSCRIPTION
-========================================================= */
-
-app.get(
-  "/inscription",
-  (req, res) => {
-
-    res.send(
-      page(
-        req,
-        "Créer un compte",
-        `
-
-<div class="formbox">
-
-<h1>
-Créer un compte
-</h1>
-
-<form
-method="post"
-action="/inscription"
->
-
-<label>
-Nom complet
-
-<input
-name="name"
-required
->
-
-</label>
-
-<label>
-E-mail
-
-<input
-type="email"
-name="email"
-required
->
-
-</label>
-
-<label>
-Téléphone
-
-<input
-name="phone"
-required
->
-
-</label>
-
-<label>
-Mot de passe
-
-<input
-type="password"
-name="password"
-minlength="8"
-required
->
-
-</label>
-
-<button
-class="btn"
->
-Créer mon compte
-</button>
-
-</form>
-
-</div>
-
-`
-      )
-    );
-  }
-);
-
-app.post(
-  "/inscription",
-  (req, res) => {
-
-    const {
-      name,
-      email,
-      phone,
-      password
-    } = req.body;
-
-    if (
-      !name ||
-      !email ||
-      !phone ||
-      !password
-    ) {
-
-      return res.status(400).send(
-        page(
-          req,
-          "Erreur",
-          `
-          <div class="card">
-
-            <h1>
-              Informations manquantes.
-            </h1>
-
-          </div>
-          `
-        )
-      );
-    }
-
-    try {
-
-      const info =
-        db
-          .prepare(
-            `
-            INSERT INTO users
-            (
-              name,
-              email,
-              phone,
-              password_hash,
-              role
-            )
-            VALUES (?, ?, ?, ?, ?)
-            `
-          )
-          .run(
-            name.trim(),
-            email
-              .trim()
-              .toLowerCase(),
-            phone.trim(),
-            bcrypt.hashSync(
-              password,
-              12
-            ),
-            "member"
-          );
-
-      req.session.userId =
-        Number(
-          info.lastInsertRowid
-        );
-
-      req.session.role =
-        "member";
-
-      res.redirect(
-        "/abonnement"
-      );
-
-    } catch (e) {
-
-      res.status(400).send(
-        page(
-          req,
-          "Erreur",
-          `
-          <div class="formbox">
-
-            <h1>
-              Erreur
-            </h1>
-
-            <p>
-              Cette adresse e-mail existe déjà
-              ou les informations sont invalides.
-            </p>
-
-            <a
-              class="btn"
-              href="/connexion"
-            >
-              Se connecter
-            </a>
-
-          </div>
-          `
-        )
-      );
-    }
-  }
-);
-
-/* =========================================================
-   CONNEXION
-========================================================= */
-
-app.get(
-  "/connexion",
-  (req, res) => {
-
-    res.send(
-      page(
-        req,
-        "Connexion",
-        `
-
-<div class="formbox">
-
-<h1>
-Connexion
-</h1>
-
-<form
-method="post"
-action="/connexion"
->
-
-<label>
-E-mail
-
-<input
-type="email"
-name="email"
-autocomplete="username"
-required
->
-
-</label>
-
-<label>
-Mot de passe
-
-<input
-type="password"
-name="password"
-autocomplete="current-password"
-required
->
-
-</label>
-
-<button
-class="btn"
->
-Se connecter
-</button>
-
-</form>
-
-<p>
-Pas encore de compte ?
-
-<a href="/inscription">
-Créer un compte
-</a>
-
-</p>
-
-</div>
-
-`
-      )
-    );
-  }
-);
-
-app.post(
-  "/connexion",
-  (req, res) => {
-
-    const email =
-      String(
-        req.body.email || ""
-      )
-        .trim()
-        .toLowerCase();
-
-    const password =
-      String(
-        req.body.password || ""
-      );
-
-    const user =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM users
-          WHERE email = ?
-          `
-        )
-        .get(email);
-
-    if (
-      !user ||
-      !bcrypt.compareSync(
-        password,
-        user.password_hash
-      )
-    ) {
-
-      return res.status(401).send(
-        page(
-          req,
-          "Connexion",
-          `
-          <div class="formbox">
-
-            <h1>
-              ❌ Connexion refusée
-            </h1>
-
-            <p>
-              L'adresse e-mail ou le mot
-              de passe est incorrect.
-            </p>
-
-            <a
-              class="btn"
-              href="/connexion"
-            >
-              Réessayer
-            </a>
-
-          </div>
-          `
-        )
-      );
-    }
-
-    req.session.regenerate(
-      err => {
-
-        if (err) {
-          return res.status(500).send(
-            "Erreur de session."
-          );
-        }
-
-        req.session.userId =
-          user.id;
-
-        req.session.role =
-          user.role;
-
-        req.session.save(
-          saveError => {
-
-            if (saveError) {
-              return res.status(500).send(
-                "Erreur de sauvegarde de session."
-              );
-            }
-
-            res.redirect(
-              user.role === "admin"
-                ? "/admin"
-                : "/compte"
-            );
-          }
-        );
-      }
-    );
-  }
-);
-
-/* =========================================================
-   DÉCONNEXION
-========================================================= */
-
-app.get(
-  "/deconnexion",
-  (req, res) => {
-
-    req.session.destroy(
-      () => {
-        res.redirect("/");
-      }
-    );
-  }
-);
-
-/* =========================================================
-   ABONNEMENT
-========================================================= */
-
-app.get(
-  "/abonnement",
-  auth,
-  (req, res) => {
-
-    res.send(
-      page(
-        req,
-        "Abonnement",
-        `
-
-<div class="grid">
-
-<div class="card">
-
-<h1>
-Choisissez votre abonnement
-</h1>
-
-<div class="plan">
-
-<h2>
-VIP 15 JOURS
-</h2>
-
-<strong>
-70 €
-</strong>
-
-<br><br>
-
-<a
-class="btn"
-href="/payer?plan=15"
->
-Payer avec Orange Money
-</a>
-
-</div>
-
-<div class="plan">
-
-<h2>
-VIP 1 MOIS
-</h2>
-
-<strong>
-100 €
-</strong>
-
-<br><br>
-
-<a
-class="btn"
-href="/payer?plan=30"
->
-Payer avec Orange Money
-</a>
-
-</div>
-
-</div>
-
-<div class="card">
-
-<h2>
-ℹ️ Paiement Orange Money
-</h2>
-
-<p>
-Après paiement, indiquez la référence
-de transaction.
-</p>
-
-<p>
-L'administrateur vérifiera puis
-activera votre accès.
-</p>
-
-</div>
-
-</div>
-
-`
-      )
-    );
-  }
-);
-
-/* =========================================================
-   PAIEMENT
-========================================================= */
-
-app.get(
-  "/payer",
-  auth,
-  (req, res) => {
-
-    const plan =
-      req.query.plan === "30"
-        ? "30"
-        : "15";
-
-    const amount =
-      plan === "30"
-        ? 100
-        : 70;
-
-    const user =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM users
-          WHERE id = ?
-          `
-        )
-        .get(
-          req.session.userId
-        );
-
-    const number =
-      process.env.ORANGE_MONEY_NUMBER ||
-      "À CONFIGURER";
-
-    const merchant =
-      process.env.ORANGE_MONEY_NAME ||
-      "À CONFIGURER";
-
-    res.send(
-      page(
-        req,
-        "Paiement",
-        `
-
-<div class="formbox">
-
-<h1>
-Paiement Orange Money
-</h1>
-
-<p>
-
-Abonnement :
-
-<b>
-${
-  plan === "30"
-    ? "1 mois"
-    : "15 jours"
-}
-</b>
-
-—
-
-<b>
-${amount} €
-</b>
-
-</p>
 
 <div class="notice">
 
-Numéro Orange Money :
-
+📝
 <b>
-${safe(number)}
+Commentaire :
 </b>
 
 <br><br>
 
-Nom :
-
-<b>
-${safe(merchant)}
-</b>
+${safe(t.notes)}
 
 </div>
 
+`
+    : ""
+}
+
+</div>
+
+`
+        )
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur pronostic :",
+        err
+      );
+
+      res.status(500).send(
+        "Erreur serveur."
+      );
+    }
+  }
+);
+
+/* =========================================================
+   ADMIN
+========================================================= */
+
+app.get(
+  "/admin",
+  admin,
+  async (req, res) => {
+
+    try {
+
+      const usersResult =
+        await pool.query(
+          `
+          SELECT
+            id,
+            name,
+            email,
+            phone,
+            role,
+            vip_until,
+            created_at
+          FROM users
+          ORDER BY id DESC
+          `
+        );
+
+      const paymentsResult =
+        await pool.query(
+          `
+          SELECT
+            p.*,
+            u.name,
+            u.email
+          FROM payments p
+          JOIN users u
+            ON u.id = p.user_id
+          ORDER BY p.id DESC
+          `
+        );
+
+      const tipsResult =
+        await pool.query(
+          `
+          SELECT *
+          FROM tips
+          ORDER BY
+            race_date DESC,
+            id DESC
+          `
+        );
+
+      const users =
+        usersResult.rows;
+
+      const payments =
+        paymentsResult.rows;
+
+      const tips =
+        tipsResult.rows;
+
+      res.send(
+        page(
+          req,
+          "Administration",
+          `
+
+<div class="card">
+
+<h1>
+⚙️ Administration
+</h1>
+
+<p>
+Bienvenue dans l'espace administrateur
+du <b>Spécial Quinté Français</b>.
+</p>
+
+<h2>
+🏇 Gestion des pronostics
+</h2>
+
+<a
+class="btn success"
+href="/admin/tip/new"
+>
+➕ Nouveau pronostic
+</a>
+
+${
+  tips.length
+    ? tips
+        .map(t => {
+
+          return `
+
+<div class="row">
+
+<b>
+${formatDate(t.race_date)}
+—
+${safe(t.title)}
+</b>
+
+<br><br>
+
+Heure :
+${safe(t.start_time)}
+
+<br>
+
+Hippodrome :
+${safe(t.course)}
+
+<br>
+
+Partants :
+${safe(t.runners)}
+
+<br><br>
+
+Bases :
+${safe(t.bases)}
+
+<br>
+
+Secondes chances :
+${safe(t.second_chances)}
+
+<br>
+
+Outsiders :
+${safe(t.outsiders)}
+
+<br>
+
+Remplaçant :
+${safe(t.replacement || "-")}
+
+<br><br>
+
+<b>
+Tiercé — 6 chevaux :
+</b>
+
+${safe(t.tierce || "-")}
+
+<br>
+
+<b>
+Quarté — 7 chevaux :
+</b>
+
+${safe(t.quarte || "-")}
+
+<br>
+
+<b>
+Quinté — 8 chevaux :
+</b>
+
+${safe(t.quinte || "-")}
+
+<div class="admin-actions">
+
+<a
+class="btn"
+href="/admin/tip/edit/${t.id}"
+>
+Modifier
+</a>
+
 <form
 method="post"
-action="/payer"
+action="/admin/tip/delete"
+style="display:inline"
 >
 
 <input
 type="hidden"
-name="plan"
-value="${plan}"
+name="id"
+value="${safe(t.id)}"
 >
-
-<label>
-
-Numéro Orange Money utilisé
-
-<input
-name="phone"
-value="${safe(user.phone)}"
-required
->
-
-</label>
-
-<label>
-
-Référence / ID de transaction
-
-<input
-name="transaction_ref"
-required
->
-
-</label>
 
 <button
-class="btn"
+class="btn danger"
+type="submit"
+onclick="return confirm('Supprimer ce pronostic ?')"
 >
-Envoyer la demande
+Supprimer
 </button>
 
 </form>
 
 </div>
 
-`
-      )
-    );
-  }
-);
+</div>
 
-app.post(
-  "/payer",
-  auth,
-  (req, res) => {
+`;
 
-    const plan =
-      req.body.plan === "30"
-        ? "30"
-        : "15";
+        })
+        .join("")
+    : `
 
-    const amount =
-      plan === "30"
-        ? 100
-        : 70;
+<div class="row">
 
-    const phone =
-      String(
-        req.body.phone || ""
-      ).trim();
-
-    const transactionRef =
-      String(
-        req.body.transaction_ref || ""
-      ).trim();
-
-    if (
-      !phone ||
-      !transactionRef
-    ) {
-
-      return res.status(400).send(
-        page(
-          req,
-          "Erreur",
-          `
-          <div class="card">
-
-            <h1>
-              Informations manquantes
-            </h1>
-
-          </div>
-          `
-        )
-      );
-    }
-
-    db.prepare(
-      `
-      INSERT INTO payments
-      (
-        user_id,
-        plan,
-        amount_eur,
-        phone,
-        transaction_ref
-      )
-      VALUES (?, ?, ?, ?, ?)
-      `
-    ).run(
-      req.session.userId,
-      plan,
-      amount,
-      phone,
-      transactionRef
-    );
-
-    res.send(
-      page(
-        req,
-        "Paiement envoyé",
-        `
-
-<div class="formbox">
-
-<h1>
-Demande reçue ✅
-</h1>
-
-<p>
-Votre demande a été enregistrée.
-</p>
-
-<p>
-Après vérification, votre accès VIP
-sera activé.
-</p>
-
-<a
-class="btn"
-href="/compte"
->
-Mon compte
-</a>
+Aucun pronostic publié.
 
 </div>
 
 `
-      )
-    );
-  }
-);
-
-/* =========================================================
-   COMPTE
-========================================================= */
-
-app.get(
-  "/compte",
-  auth,
-  (req, res) => {
-
-    const user =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM users
-          WHERE id = ?
-          `
-        )
-        .get(
-          req.session.userId
-        );
-
-    if (!user) {
-
-      return req.session.destroy(
-        () =>
-          res.redirect(
-            "/connexion"
-          )
-      );
-    }
-
-    const payments =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM payments
-          WHERE user_id = ?
-          ORDER BY id DESC
-          `
-        )
-        .all(user.id);
-
-    res.send(
-      page(
-        req,
-        "Mon compte",
-        `
-
-<div class="card">
-
-<h1>
-Bonjour ${safe(user.name)}
-</h1>
-
-<p>
-${safe(user.email)}
-•
-${safe(user.phone)}
-</p>
-
-<h2>
-Statut :
-${
-  isVip(user)
-    ? "🟢 VIP actif"
-    : "⚪ Non abonné"
-}
-</h2>
-
-${
-  isVip(user)
-    ? `
-      <div class="vip">
-
-      <p>
-      Votre accès VIP expire le :
-      <b>
-      ${new Date(
-        user.vip_until
-      ).toLocaleString("fr-FR")}
-      </b>
-      </p>
-
-      <a
-      class="btn"
-      href="/pronostic"
-      >
-      Accéder au pronostic
-      </a>
-
-      </div>
-      `
-    : `
-      <a
-      class="btn"
-      href="/abonnement"
-      >
-      Choisir un abonnement
-      </a>
-      `
 }
 
 <h2>
-Mes paiements
+💳 Demandes de paiement
 </h2>
 
 ${
   payments.length
     ? payments
-        .map(
-          p => `
+        .map(p => {
+
+          return `
 
 <div class="row">
 
 <b>
-Commande #${p.id}
+#${p.id}
 </b>
+
+—
+
+${safe(p.name)}
+
+—
+
+${p.amount_eur} €
 
 <br>
 
-${p.amount_eur}
-€
-—
-${safe(p.status)}
+E-mail :
+${safe(p.email)}
+
+<br>
+
+Téléphone :
+${safe(p.phone)}
+
+<br>
+
+Abonnement :
+${
+  p.plan === "30"
+    ? "1 mois"
+    : "15 jours"
+}
 
 <br>
 
 Référence :
-
 ${safe(
   p.transaction_ref || "-"
 )}
 
-</div>
+<br>
+
+Statut :
+<b>
+${safe(p.status)}
+</b>
+
+${
+  p.status === "pending"
+    ? `
+
+<form
+method="post"
+action="/admin/confirm"
+style="margin-top:10px"
+>
+
+<input
+type="hidden"
+name="payment_id"
+value="${safe(p.id)}"
+>
+
+<button
+class="btn success"
+type="submit"
+>
+✅ Confirmer le paiement
+</button>
+
+</form>
 
 `
-        )
+    : ""
+}
+
+</div>
+
+`;
+
+        })
         .join("")
-    : "<p>Aucun paiement.</p>"
+    : "<p>Aucune demande de paiement.</p>"
+}
+
+<h2>
+👥 Comptes utilisateurs
+</h2>
+
+${
+  users
+    .map(u => {
+
+      return `
+
+<div class="row">
+
+<b>
+${safe(u.name)}
+</b>
+
+<br>
+
+E-mail :
+${safe(u.email)}
+
+<br>
+
+Téléphone :
+${safe(u.phone)}
+
+<br>
+
+Rôle :
+<b>
+${safe(u.role)}
+</b>
+
+<br>
+
+VIP :
+${
+  u.vip_until
+    ? new Date(
+        u.vip_until
+      ).toLocaleString(
+        "fr-FR"
+      )
+    : "non"
+}
+
+</div>
+
+`;
+
+    })
+    .join("")
 }
 
 </div>
 
 `
-      )
-    );
-  }
-);
-
-/* =========================================================
-   PRONOSTIC VIP
-========================================================= */
-
-app.get(
-  "/pronostic",
-  auth,
-  (req, res) => {
-
-    const user =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM users
-          WHERE id = ?
-          `
         )
-        .get(
-          req.session.userId
-        );
-
-    if (
-      !user ||
-      (
-        user.role !== "admin" &&
-        !isVip(user)
-      )
-    ) {
-
-      return res.redirect(
-        "/abonnement"
       );
-    }
 
-    const t =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM tips
-          ORDER BY race_date DESC, id DESC
-          LIMIT 1
-          `
-        )
-        .get();
+    } catch (err) {
 
-    if (!t) {
+      console.error(
+        "Erreur Admin :",
+        err
+      );
 
-      return res.send(
+      res.status(500).send(
         page(
           req,
-          "Pronostic",
+          "Erreur",
           `
           <div class="card">
 
             <h1>
-              Aucun pronostic disponible.
+              ❌ Erreur Admin
             </h1>
+
+            <p>
+              Impossible de charger
+              les données administratives.
+            </p>
 
           </div>
           `
         )
       );
     }
-
-    res.send(
-      page(
-        req,
-        "Pronostic VIP",
-        `
-
-<div class="card">
-
-<h1>
-🔐 PRONOSTIC VIP
-</h1>
-
-<h2>
-${safe(t.title)}
-</h2>
-
-<p>
-
-📅
-${formatDate(t.race_date)}
-
-•
-
-🕐
-${safe(t.start_time)}
-
-•
-
-🏇
-${safe(t.course)}
-
-•
-
-📏
-${safe(t.distance)}
-
-•
-
-🐎
-${safe(t.runners)}
-partants
-
-</p>
-
-${tipFields(t)}
-
-</div>
-
-`
-      )
-    );
   }
 );
 
 /* =========================================================
-   FORMULAIRE PRONOSTIC ADMIN
+   NOUVEAU PRONOSTIC
 ========================================================= */
 
-function tipForm(
-  t = {},
-  action = "/admin/tip/new"
-) {
+app.get(
+  "/admin/tip/new",
+  admin,
+  (req, res) => {
 
-  return `
+    res.send(
+      page(
+        req,
+        "Nouveau pronostic",
+        `
 
 <div class="formbox">
 
 <h1>
-${
-  t.id
-    ? "✏️ Modifier"
-    : "➕ Nouveau"
-}
-pronostic
+➕ Nouveau pronostic
 </h1>
 
 <form
 method="post"
-action="${action}"
+action="/admin/tip/new"
 >
 
 <label>
 
-Date
+Date de la course
 
 <input
 type="date"
 name="race_date"
-value="${safe(t.race_date)}"
 required
 >
 
@@ -2422,7 +3684,6 @@ Titre
 
 <input
 name="title"
-value="${safe(t.title)}"
 placeholder="Quinté du jour — R1C1"
 required
 >
@@ -2435,7 +3696,6 @@ Heure
 
 <input
 name="start_time"
-value="${safe(t.start_time)}"
 placeholder="13H50"
 required
 >
@@ -2448,7 +3708,6 @@ Hippodrome
 
 <input
 name="course"
-value="${safe(t.course)}"
 placeholder="Deauville"
 required
 >
@@ -2461,7 +3720,6 @@ Distance
 
 <input
 name="distance"
-value="${safe(t.distance)}"
 placeholder="2 400 M"
 required
 >
@@ -2476,7 +3734,490 @@ Nombre de partants
 type="number"
 name="runners"
 min="1"
-value="${safe(t.runners || "")}"
+max="99"
+required
+>
+
+</label>
+
+<label>
+
+Bases
+
+<input
+name="bases"
+placeholder="5 – 8 – 12"
+required
+>
+
+</label>
+
+<label>
+
+Secondes chances
+
+<input
+name="second_chances"
+placeholder="3 – 7 – 10"
+required
+>
+
+</label>
+
+<label>
+
+Outsiders
+
+<input
+name="outsiders"
+placeholder="2 – 11 – 14"
+required
+>
+
+</label>
+
+<label>
+
+Remplaçant
+
+<input
+name="replacement"
+placeholder="6"
+>
+
+</label>
+
+<hr>
+
+<h2>
+🎯 Jeux du jour
+</h2>
+
+<label>
+
+Tiercé — 6 chevaux
+
+<input
+name="tierce"
+placeholder="5 – 8 – 12 – 3 – 7 – 10"
+required
+>
+
+</label>
+
+<label>
+
+Quarté — 7 chevaux
+
+<input
+name="quarte"
+placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2"
+required
+>
+
+</label>
+
+<label>
+
+Quinté — 8 chevaux
+
+<input
+name="quinte"
+placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2 – 11"
+required
+>
+
+</label>
+
+<label>
+
+Notes / commentaire
+
+<textarea
+name="notes"
+></textarea>
+
+</label>
+
+<button
+class="btn success"
+type="submit"
+>
+Publier le pronostic
+</button>
+
+</form>
+
+</div>
+
+`
+      )
+    );
+  }
+);
+
+/* =========================================================
+   NOUVEAU PRONOSTIC POST
+========================================================= */
+
+app.post(
+  "/admin/tip/new",
+  admin,
+  async (req, res) => {
+
+    try {
+
+      const runners =
+        Number(
+          req.body.runners
+        );
+
+      const raceDate =
+        String(
+          req.body.race_date || ""
+        ).trim();
+
+      const title =
+        String(
+          req.body.title || ""
+        ).trim();
+
+      const startTime =
+        String(
+          req.body.start_time || ""
+        ).trim();
+
+      const course =
+        String(
+          req.body.course || ""
+        ).trim();
+
+      const distance =
+        String(
+          req.body.distance || ""
+        ).trim();
+
+      const bases =
+        String(
+          req.body.bases || ""
+        ).trim();
+
+      const secondChances =
+        String(
+          req.body.second_chances || ""
+        ).trim();
+
+      const outsiders =
+        String(
+          req.body.outsiders || ""
+        ).trim();
+
+      const replacement =
+        String(
+          req.body.replacement || ""
+        ).trim();
+
+      const tierce =
+        String(
+          req.body.tierce || ""
+        ).trim();
+
+      const quarte =
+        String(
+          req.body.quarte || ""
+        ).trim();
+
+      const quinte =
+        String(
+          req.body.quinte || ""
+        ).trim();
+
+      const notes =
+        String(
+          req.body.notes || ""
+        ).trim();
+
+      if (
+        !raceDate ||
+        !title ||
+        !startTime ||
+        !course ||
+        !distance ||
+        !Number.isInteger(runners) ||
+        runners < 1 ||
+        runners > 99 ||
+        !bases ||
+        !secondChances ||
+        !outsiders ||
+        !tierce ||
+        !quarte ||
+        !quinte
+      ) {
+
+        return res.status(400).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                ❌ Données invalides
+              </h1>
+
+              <p>
+                Veuillez remplir tous les champs obligatoires.
+              </p>
+
+              <a
+                class="btn"
+                href="/admin/tip/new"
+              >
+                Retour
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      await pool.query(
+        `
+        INSERT INTO tips
+        (
+          race_date,
+          title,
+          start_time,
+          course,
+          distance,
+          runners,
+          bases,
+          second_chances,
+          outsiders,
+          replacement,
+          tierce,
+          quarte,
+          quinte,
+          notes
+        )
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14
+        )
+        `,
+        [
+          raceDate,
+          title,
+          startTime,
+          course,
+          distance,
+          runners,
+          bases,
+          secondChances,
+          outsiders,
+          replacement,
+          tierce,
+          quarte,
+          quinte,
+          notes
+        ]
+      );
+
+      res.redirect(
+        "/admin"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur création pronostic :",
+        err
+      );
+
+      res.status(500).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="card">
+
+            <h1>
+              ❌ Erreur
+            </h1>
+
+            <p>
+              Impossible de publier le pronostic.
+            </p>
+
+            <a
+              class="btn"
+              href="/admin"
+            >
+              Retour Admin
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+  }
+);
+
+/* =========================================================
+   MODIFICATION PRONOSTIC GET
+========================================================= */
+
+app.get(
+  "/admin/tip/edit/:id",
+  admin,
+  async (req, res) => {
+
+    try {
+
+      const result =
+        await pool.query(
+          `
+          SELECT *
+          FROM tips
+          WHERE id = $1
+          `,
+          [req.params.id]
+        );
+
+      const t =
+        result.rows[0];
+
+      if (!t) {
+
+        return res.status(404).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                Pronostic introuvable
+              </h1>
+
+              <a
+                class="btn"
+                href="/admin"
+              >
+                Retour Admin
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      res.send(
+        page(
+          req,
+          "Modifier pronostic",
+          `
+
+<div class="formbox">
+
+<h1>
+✏️ Modifier le pronostic
+</h1>
+
+<form
+method="post"
+action="/admin/tip/edit/${safe(t.id)}"
+>
+
+<label>
+
+Date
+
+<input
+type="date"
+name="race_date"
+value="${safe(
+  String(t.race_date).slice(0, 10)
+)}"
+required
+>
+
+</label>
+
+<label>
+
+Titre
+
+<input
+name="title"
+value="${safe(t.title)}"
+required
+>
+
+</label>
+
+<label>
+
+Heure
+
+<input
+name="start_time"
+value="${safe(t.start_time)}"
+required
+>
+
+</label>
+
+<label>
+
+Hippodrome
+
+<input
+name="course"
+value="${safe(t.course)}"
+required
+>
+
+</label>
+
+<label>
+
+Distance
+
+<input
+name="distance"
+value="${safe(t.distance)}"
+required
+>
+
+</label>
+
+<label>
+
+Partants
+
+<input
+type="number"
+name="runners"
+min="1"
+max="99"
+value="${safe(t.runners)}"
 required
 >
 
@@ -2581,7 +4322,7 @@ required
 
 <label>
 
-Notes / commentaire
+Notes
 
 <textarea
 name="notes"
@@ -2593,508 +4334,194 @@ name="notes"
 
 <button
 class="btn success"
+type="submit"
 >
-${
-  t.id
-    ? "Enregistrer les modifications"
-    : "Publier le pronostic"
-}
+Enregistrer les modifications
 </button>
 
 </form>
 
 </div>
 
-`;
-}
-
-/* =========================================================
-   ADMIN
-========================================================= */
-
-app.get(
-  "/admin",
-  adminOnly,
-  (req, res) => {
-
-    const users =
-      db
-        .prepare(
-          `
-          SELECT
-            id,
-            name,
-            email,
-            phone,
-            role,
-            vip_until
-          FROM users
-          ORDER BY id DESC
-          `
-        )
-        .all();
-
-    const payments =
-      db
-        .prepare(
-          `
-          SELECT
-            p.*,
-            u.name,
-            u.email
-          FROM payments p
-          JOIN users u
-            ON u.id = p.user_id
-          ORDER BY p.id DESC
-          `
-        )
-        .all();
-
-    const tips =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM tips
-          ORDER BY race_date DESC, id DESC
-          `
-        )
-        .all();
-
-    res.send(
-      page(
-        req,
-        "Administration",
-        `
-
-<div class="card">
-
-<h1>
-⚙️ Administration
-</h1>
-
-<p>
-Bienvenue dans l'espace administrateur.
-</p>
-
-<h2>
-🏇 Gestion des pronostics
-</h2>
-
-<a
-class="btn success"
-href="/admin/tip/new"
->
-➕ Nouveau pronostic
-</a>
-
-${
-  tips.length
-    ? tips
-        .map(
-          t => `
-
-<div class="row">
-
-<b>
-${formatDate(t.race_date)}
-—
-${safe(t.title)}
-</b>
-
-<br><br>
-
-Bases :
-${safe(t.bases)}
-
-<br>
-
-Secondes chances :
-${safe(t.second_chances)}
-
-<br>
-
-Outsiders :
-${safe(t.outsiders)}
-
-<br>
-
-Remplaçant :
-${safe(t.replacement || "-")}
-
-<br><br>
-
-<b>
-Tiercé — 6 :
-</b>
-
-${safe(t.tierce || "-")}
-
-<br>
-
-<b>
-Quarté — 7 :
-</b>
-
-${safe(t.quarte || "-")}
-
-<br>
-
-<b>
-Quinté — 8 :
-</b>
-
-${safe(t.quinte || "-")}
-
-<div class="admin-actions">
-
-<a
-class="btn"
-href="/admin/tip/edit/${t.id}"
->
-Modifier
-</a>
-
-<form
-method="post"
-action="/admin/tip/delete"
->
-
-<input
-type="hidden"
-name="id"
-value="${t.id}"
->
-
-<button
-class="btn danger"
-onclick="return confirm('Supprimer ce pronostic ?')"
->
-Supprimer
-</button>
-
-</form>
-
-</div>
-
-</div>
-
 `
-        )
-        .join("")
-    : "<p>Aucun pronostic.</p>"
-}
-
-<h2>
-💳 Demandes de paiement
-</h2>
-
-${
-  payments.length
-    ? payments
-        .map(
-          p => `
-
-<div class="row">
-
-<b>
-#${p.id}
-—
-${safe(p.name)}
-—
-${p.amount_eur} €
-</b>
-
-<br>
-
-Téléphone :
-${safe(p.phone)}
-
-<br>
-
-Référence :
-${safe(
-  p.transaction_ref || "-"
-)}
-
-<br>
-
-Statut :
-<b>
-${safe(p.status)}
-</b>
-
-${
-  p.status === "pending"
-    ? `
-
-<form
-method="post"
-action="/admin/confirm"
->
-
-<input
-type="hidden"
-name="payment_id"
-value="${p.id}"
->
-
-<button
-class="btn success"
->
-Confirmer le paiement
-</button>
-
-</form>
-
-`
-    : ""
-}
-
-</div>
-
-`
-        )
-        .join("")
-    : "<p>Aucune demande de paiement.</p>"
-}
-
-<h2>
-👥 Comptes utilisateurs
-</h2>
-
-${
-  users
-    .map(
-      u => `
-
-<div class="row">
-
-<b>
-${safe(u.name)}
-</b>
-
-—
-
-${safe(u.email)}
-
-<br>
-
-Rôle :
-<b>
-${safe(u.role)}
-</b>
-
-<br>
-
-VIP :
-
-${
-  u.vip_until
-    ? safe(u.vip_until)
-    : "non"
-}
-
-</div>
-
-`
-    )
-    .join("")
-}
-
-</div>
-
-`
-      )
-    );
-  }
-);
-
-/* =========================================================
-   NOUVEAU PRONOSTIC
-========================================================= */
-
-app.get(
-  "/admin/tip/new",
-  adminOnly,
-  (req, res) => {
-
-    res.send(
-      page(
-        req,
-        "Nouveau pronostic",
-        tipForm()
-      )
-    );
-  }
-);
-
-function validTip(body) {
-
-  const runners =
-    Number(body.runners);
-
-  return (
-    body.race_date &&
-    body.title &&
-    body.start_time &&
-    body.course &&
-    body.distance &&
-    Number.isInteger(runners) &&
-    runners > 0 &&
-    body.bases &&
-    body.second_chances &&
-    body.outsiders &&
-    body.tierce &&
-    body.quarte &&
-    body.quinte
-  );
-}
-
-function tipValues(body) {
-
-  return [
-    body.race_date,
-    body.title,
-    body.start_time,
-    body.course,
-    body.distance,
-    Number(body.runners),
-    body.bases,
-    body.second_chances,
-    body.outsiders,
-    body.replacement || "",
-    body.tierce,
-    body.quarte,
-    body.quinte,
-    body.notes || ""
-  ];
-}
-
-app.post(
-  "/admin/tip/new",
-  adminOnly,
-  (req, res) => {
-
-    if (!validTip(req.body)) {
-
-      return res.status(400).send(
-        page(
-          req,
-          "Erreur",
-          `
-          <div class="card">
-
-            <h1>
-              ❌ Données invalides
-            </h1>
-
-            <a
-              class="btn"
-              href="/admin/tip/new"
-            >
-              Retour
-            </a>
-
-          </div>
-          `
         )
       );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur modification GET :",
+        err
+      );
+
+      res.status(500).send(
+        "Erreur serveur."
+      );
     }
-
-    db.prepare(
-      `
-      INSERT INTO tips
-      (
-        race_date,
-        title,
-        start_time,
-        course,
-        distance,
-        runners,
-        bases,
-        second_chances,
-        outsiders,
-        replacement,
-        tierce,
-        quarte,
-        quinte,
-        notes
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    ).run(
-      ...tipValues(req.body)
-    );
-
-    res.redirect(
-      "/admin"
-    );
   }
 );
 
 /* =========================================================
-   MODIFICATION PRONOSTIC
+   MODIFICATION PRONOSTIC POST
 ========================================================= */
 
-app.get(
+app.post(
   "/admin/tip/edit/:id",
-  adminOnly,
-  (req, res) => {
+  admin,
+  async (req, res) => {
 
-    const t =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM tips
-          WHERE id = ?
-          `
-        )
-        .get(
-          req.params.id
+    try {
+
+      const runners =
+        Number(
+          req.body.runners
         );
 
-    if (!t) {
+      if (
+        !req.body.race_date ||
+        !req.body.title ||
+        !req.body.start_time ||
+        !req.body.course ||
+        !req.body.distance ||
+        !Number.isInteger(runners) ||
+        runners < 1 ||
+        runners > 99 ||
+        !req.body.bases ||
+        !req.body.second_chances ||
+        !req.body.outsiders ||
+        !req.body.tierce ||
+        !req.body.quarte ||
+        !req.body.quinte
+      ) {
 
-      return res.status(404).send(
-        page(
-          req,
-          "Erreur",
+        return res.status(400).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                ❌ Données invalides
+              </h1>
+
+              <a
+                class="btn"
+                href="/admin"
+              >
+                Retour Admin
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      const result =
+        await pool.query(
           `
-          <div class="card">
+          UPDATE tips
+          SET
+            race_date = $1,
+            title = $2,
+            start_time = $3,
+            course = $4,
+            distance = $5,
+            runners = $6,
+            bases = $7,
+            second_chances = $8,
+            outsiders = $9,
+            replacement = $10,
+            tierce = $11,
+            quarte = $12,
+            quinte = $13,
+            notes = $14,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $15
+          RETURNING id
+          `,
+          [
+            req.body.race_date,
+            String(
+              req.body.title
+            ).trim(),
+            String(
+              req.body.start_time
+            ).trim(),
+            String(
+              req.body.course
+            ).trim(),
+            String(
+              req.body.distance
+            ).trim(),
+            runners,
+            String(
+              req.body.bases
+            ).trim(),
+            String(
+              req.body.second_chances
+            ).trim(),
+            String(
+              req.body.outsiders
+            ).trim(),
+            String(
+              req.body.replacement || ""
+            ).trim(),
+            String(
+              req.body.tierce
+            ).trim(),
+            String(
+              req.body.quarte
+            ).trim(),
+            String(
+              req.body.quinte
+            ).trim(),
+            String(
+              req.body.notes || ""
+            ).trim(),
+            req.params.id
+          ]
+        );
 
-            <h1>
-              Pronostic introuvable
-            </h1>
+      if (!result.rows.length) {
 
-          </div>
-          `
-        )
+        return res.status(404).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                Pronostic introuvable
+              </h1>
+
+              <a
+                class="btn"
+                href="/admin"
+              >
+                Retour Admin
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      res.redirect(
+        "/admin"
       );
-    }
 
-    res.send(
-      page(
-        req,
-        "Modifier pronostic",
-        tipForm(
-          t,
-          `/admin/tip/edit/${t.id}`
-        )
-      )
-    );
-  }
-);
+    } catch (err) {
 
-app.post(
-  "/admin/tip/edit/:id",
-  adminOnly,
-  (req, res) => {
+      console.error(
+        "Erreur modification :",
+        err
+      );
 
-    if (!validTip(req.body)) {
-
-      return res.status(400).send(
+      res.status(500).send(
         page(
           req,
           "Erreur",
@@ -3102,8 +4529,12 @@ app.post(
           <div class="card">
 
             <h1>
-              ❌ Données invalides
+              ❌ Erreur
             </h1>
+
+            <p>
+              Impossible de modifier le pronostic.
+            </p>
 
             <a
               class="btn"
@@ -3117,35 +4548,6 @@ app.post(
         )
       );
     }
-
-    db.prepare(
-      `
-      UPDATE tips
-      SET
-        race_date = ?,
-        title = ?,
-        start_time = ?,
-        course = ?,
-        distance = ?,
-        runners = ?,
-        bases = ?,
-        second_chances = ?,
-        outsiders = ?,
-        replacement = ?,
-        tierce = ?,
-        quarte = ?,
-        quinte = ?,
-        notes = ?
-      WHERE id = ?
-      `
-    ).run(
-      ...tipValues(req.body),
-      req.params.id
-    );
-
-    res.redirect(
-      "/admin"
-    );
   }
 );
 
@@ -3155,31 +4557,49 @@ app.post(
 
 app.post(
   "/admin/tip/delete",
-  adminOnly,
-  (req, res) => {
+  admin,
+  async (req, res) => {
 
-    const id =
-      Number(req.body.id);
+    try {
 
-    if (
-      !Number.isInteger(id)
-    ) {
+      const id =
+        Number(
+          req.body.id
+        );
 
-      return res.status(400).send(
-        "Identifiant invalide."
+      if (
+        !Number.isInteger(id) ||
+        id < 1
+      ) {
+
+        return res.status(400).send(
+          "Identifiant de pronostic invalide."
+        );
+      }
+
+      await pool.query(
+        `
+        DELETE FROM tips
+        WHERE id = $1
+        `,
+        [id]
+      );
+
+      res.redirect(
+        "/admin"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Erreur suppression :",
+        err
+      );
+
+      res.status(500).send(
+        "Erreur serveur."
       );
     }
-
-    db.prepare(
-      `
-      DELETE FROM tips
-      WHERE id = ?
-      `
-    ).run(id);
-
-    res.redirect(
-      "/admin"
-    );
   }
 );
 
@@ -3189,135 +4609,295 @@ app.post(
 
 app.post(
   "/admin/confirm",
-  adminOnly,
-  (req, res) => {
+  admin,
+  async (req, res) => {
 
-    const payment =
-      db
-        .prepare(
-          `
-          SELECT *
-          FROM payments
-          WHERE id = ?
-          `
-        )
-        .get(
+    const client =
+      await pool.connect();
+
+    try {
+
+      const paymentId =
+        Number(
           req.body.payment_id
         );
 
-    if (!payment) {
+      if (
+        !Number.isInteger(paymentId) ||
+        paymentId < 1
+      ) {
 
-      return res.status(404).send(
-        "Paiement introuvable."
+        client.release();
+
+        return res.status(400).send(
+          "Identifiant de paiement invalide."
+        );
+      }
+
+      await client.query(
+        "BEGIN"
       );
-    }
 
-    /*
-       Évite de confirmer deux fois
-       le même paiement.
-    */
+      /*
+         Verrouille le paiement pendant
+         la confirmation afin d'éviter
+         une double activation.
+      */
 
-    if (
-      payment.status ===
-      "confirmed"
-    ) {
+      const paymentResult =
+        await client.query(
+          `
+          SELECT *
+          FROM payments
+          WHERE id = $1
+          FOR UPDATE
+          `,
+          [paymentId]
+        );
 
-      return res.redirect(
-        "/admin"
-      );
-    }
+      const payment =
+        paymentResult.rows[0];
 
-    const user =
-      db
-        .prepare(
+      if (!payment) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        client.release();
+
+        return res.status(404).send(
+          page(
+            req,
+            "Erreur",
+            `
+            <div class="card">
+
+              <h1>
+                Paiement introuvable
+              </h1>
+
+              <a
+                class="btn"
+                href="/admin"
+              >
+                Retour Admin
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      /*
+         Protection contre la double confirmation.
+      */
+
+      if (
+        payment.status === "confirmed"
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        client.release();
+
+        return res.send(
+          page(
+            req,
+            "Paiement déjà confirmé",
+            `
+            <div class="card">
+
+              <h1>
+                ✅ Paiement déjà confirmé
+              </h1>
+
+              <p>
+                Cette demande a déjà été traitée.
+              </p>
+
+              <a
+                class="btn"
+                href="/admin"
+              >
+                Retour Admin
+              </a>
+
+            </div>
+            `
+          )
+        );
+      }
+
+      const days =
+        payment.plan === "30"
+          ? 30
+          : 15;
+
+      const userResult =
+        await client.query(
           `
           SELECT *
           FROM users
-          WHERE id = ?
-          `
-        )
-        .get(
-          payment.user_id
+          WHERE id = $1
+          FOR UPDATE
+          `,
+          [payment.user_id]
         );
 
-    if (!user) {
+      const user =
+        userResult.rows[0];
 
-      return res.status(404).send(
-        "Utilisateur introuvable."
-      );
-    }
+      if (!user) {
 
-    let baseDate =
-      new Date();
+        await client.query(
+          "ROLLBACK"
+        );
 
-    /*
-       Si le VIP est déjà actif,
-       on ajoute les jours à la date
-       d'expiration existante.
-    */
+        client.release();
 
-    if (
-      user.vip_until &&
-      new Date(user.vip_until) >
-        baseDate
-    ) {
+        return res.status(404).send(
+          "Utilisateur introuvable."
+        );
+      }
 
-      baseDate =
+      let baseDate =
+        new Date();
+
+      if (
+        user.vip_until &&
         new Date(
           user.vip_until
-        );
-    }
+        ) > baseDate
+      ) {
 
-    const days =
-      payment.plan === "30"
-        ? 30
-        : 15;
+        baseDate =
+          new Date(
+            user.vip_until
+          );
+      }
 
-    const vipUntil =
-      new Date(
-        baseDate.getTime() +
-        days *
+      const until =
+        new Date(
+          baseDate.getTime() +
+          days *
           24 *
           60 *
           60 *
           1000
-      ).toISOString();
+        );
 
-    const transaction =
-      db.transaction(
-        () => {
-
-          db.prepare(
-            `
-            UPDATE payments
-            SET
-              status = 'confirmed',
-              confirmed_at =
-                CURRENT_TIMESTAMP
-            WHERE id = ?
-            `
-          ).run(
-            payment.id
-          );
-
-          db.prepare(
-            `
-            UPDATE users
-            SET vip_until = ?
-            WHERE id = ?
-            `
-          ).run(
-            vipUntil,
-            payment.user_id
-          );
-        }
+      await client.query(
+        `
+        UPDATE payments
+        SET
+          status = 'confirmed',
+          confirmed_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [payment.id]
       );
 
-    transaction();
+      await client.query(
+        `
+        UPDATE users
+        SET
+          vip_until = $1
+        WHERE id = $2
+        `,
+        [
+          until.toISOString(),
+          payment.user_id
+        ]
+      );
 
-    res.redirect(
-      "/admin"
-    );
+      await client.query(
+        "COMMIT"
+      );
+
+      client.release();
+
+      res.redirect(
+        "/admin"
+      );
+
+    } catch (err) {
+
+      try {
+        await client.query(
+          "ROLLBACK"
+        );
+      } catch (_) {}
+
+      client.release();
+
+      console.error(
+        "Erreur confirmation paiement :",
+        err
+      );
+
+      res.status(500).send(
+        page(
+          req,
+          "Erreur",
+          `
+          <div class="card">
+
+            <h1>
+              ❌ Erreur de confirmation
+            </h1>
+
+            <p>
+              Le paiement n'a pas pu être confirmé.
+            </p>
+
+            <a
+              class="btn"
+              href="/admin"
+            >
+              Retour Admin
+            </a>
+
+          </div>
+          `
+        )
+      );
+    }
+  }
+);
+
+/* =========================================================
+   HEALTH CHECK RENDER
+========================================================= */
+
+app.get(
+  "/healthz",
+  async (req, res) => {
+
+    try {
+
+      await pool.query(
+        "SELECT 1"
+      );
+
+      res.status(200).send(
+        "OK"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Health check database error :",
+        err
+      );
+
+      res.status(503).send(
+        "Database unavailable"
+      );
+    }
   }
 );
 
@@ -3333,21 +4913,28 @@ app.use(
         req,
         "Page introuvable",
         `
-        <div class="card">
 
-          <h1>
-            404 — Page introuvable
-          </h1>
+<div class="card center">
 
-          <a
-            class="btn"
-            href="/"
-          >
-            Retour à l'accueil
-          </a>
+<h1>
+404 — Page introuvable
+</h1>
 
-        </div>
-        `
+<p>
+La page que vous recherchez
+n'existe pas.
+</p>
+
+<a
+class="btn"
+href="/"
+>
+Retour à l'accueil
+</a>
+
+</div>
+
+`
       )
     );
   }
@@ -3358,21 +4945,14 @@ app.use(
 ========================================================= */
 
 app.use(
-  (
-    err,
-    req,
-    res,
-    next
-  ) => {
+  (err, req, res, next) => {
 
     console.error(
       "Erreur serveur :",
       err
     );
 
-    if (
-      res.headersSent
-    ) {
+    if (res.headersSent) {
       return next(err);
     }
 
@@ -3381,80 +4961,175 @@ app.use(
         req,
         "Erreur serveur",
         `
-        <div class="card">
 
-          <h1>
-            ❌ Erreur serveur
-          </h1>
+<div class="card center">
 
-          <p>
-            Une erreur inattendue
-            est survenue.
-          </p>
+<h1>
+❌ Erreur serveur
+</h1>
 
-          <a
-            class="btn"
-            href="/"
-          >
-            Accueil
-          </a>
+<p>
+Une erreur inattendue est survenue.
+Veuillez réessayer.
+</p>
 
-        </div>
-        `
+<a
+class="btn"
+href="/"
+>
+Retour à l'accueil
+</a>
+
+</div>
+
+`
       )
     );
   }
 );
 
 /* =========================================================
-   DÉMARRAGE
+   DEMARRAGE
 ========================================================= */
 
-app.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
+async function startServer() {
+
+  try {
 
     console.log(
+      "Connexion à PostgreSQL..."
+    );
+
+    await pool.query(
+      "SELECT 1"
+    );
+
+    console.log(
+      "PostgreSQL : connexion OK"
+    );
+
+    await initializeDatabase();
+
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+
+        console.log(
+          "=========================================="
+        );
+
+        console.log(
+          "SPÉCIAL QUINTÉ FRANÇAIS"
+        );
+
+        console.log(
+          "Serveur lancé sur le port " +
+          PORT
+        );
+
+        console.log(
+          "Base : PostgreSQL"
+        );
+
+        console.log(
+          "Admin : " +
+          ADMIN_EMAIL
+        );
+
+        console.log(
+          "Tiercé : 6 chevaux"
+        );
+
+        console.log(
+          "Quarté : 7 chevaux"
+        );
+
+        console.log(
+          "Quinté : 8 chevaux"
+        );
+
+        console.log(
+          "Accueil : pronostic masqué"
+        );
+
+        console.log(
+          "Archives : publiques"
+        );
+
+        console.log(
+          "=========================================="
+        );
+      }
+    );
+
+  } catch (err) {
+
+    console.error(
       "=========================================="
     );
 
-    console.log(
-      "SPÉCIAL QUINTÉ FRANÇAIS"
+    console.error(
+      "IMPOSSIBLE DE DÉMARRER LE SERVEUR"
     );
 
-    console.log(
-      "Serveur lancé sur le port " +
-      PORT
+    console.error(err);
+
+    console.error(
+      "Vérifiez DATABASE_URL dans Render."
     );
 
-    console.log(
-      "Admin : " +
-      ADMIN_EMAIL
-    );
-
-    console.log(
-      "Tiercé : 6 chevaux"
-    );
-
-    console.log(
-      "Quarté : 7 chevaux"
-    );
-
-    console.log(
-      "Quinté : 8 chevaux"
-    );
-
-    console.log(
-      "Accueil : pronostic masqué"
-    );
-
-    console.log(
-      "Archives : publiques"
-    );
-
-    console.log(
+    console.error(
       "=========================================="
     );
+
+    process.exit(1);
   }
+}
+
+/* =========================================================
+   ARRET PROPRE
+========================================================= */
+
+async function shutdown(signal) {
+
+  console.log(
+    `${signal} reçu. Arrêt du serveur...`
+  );
+
+  try {
+
+    await pool.end();
+
+    console.log(
+      "PostgreSQL fermé."
+    );
+
+    process.exit(0);
+
+  } catch (err) {
+
+    console.error(
+      "Erreur fermeture PostgreSQL :",
+      err
+    );
+
+    process.exit(1);
+  }
+}
+
+process.on(
+  "SIGTERM",
+  () => shutdown("SIGTERM")
 );
+
+process.on(
+  "SIGINT",
+  () => shutdown("SIGINT")
+);
+
+/* =========================================================
+   LANCEMENT
+========================================================= */
+
+startServer();
