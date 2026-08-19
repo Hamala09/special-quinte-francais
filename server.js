@@ -10,22 +10,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 /* =========================================================
-   CONFIGURATION ADMIN
+   CONFIGURATION
 ========================================================= */
 
-/*
-   IDENTIFIANTS ADMIN FIXES
-   ========================
+const ADMIN_EMAIL =
+  "admin@special-quinte-francais.com";
 
-   E-mail :
-   admin@special-quinte-francais.com
-
-   Mot de passe :
-   Compta@09
-*/
-
-const ADMIN_EMAIL = "admin@special-quinte-francais.com";
-const ADMIN_PASSWORD = "Compta@09";
+const ADMIN_PASSWORD =
+  "Compta@09";
 
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
@@ -35,8 +27,9 @@ const SESSION_SECRET =
    BASE DE DONNÉES
 ========================================================= */
 
-const dbPath = path.join(__dirname, "data.db");
-const db = new Database(dbPath);
+const db = new Database(
+  path.join(__dirname, "data.db")
+);
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
@@ -89,53 +82,68 @@ CREATE TABLE IF NOT EXISTS tips (
 `);
 
 /* =========================================================
-   COMPATIBILITÉ AVEC UNE ANCIENNE BASE
+   COMPATIBILITÉ ANCIENNE BASE
 ========================================================= */
 
-/*
-   Si data.db existait déjà avec l'ancienne structure,
-   SQLite ajoute les nouvelles colonnes sans supprimer
-   les anciens pronostics.
-*/
-
-function addColumnIfMissing(table, column, definition) {
+function addColumnIfMissing(
+  table,
+  column,
+  definition
+) {
   const columns = db
     .prepare(`PRAGMA table_info(${table})`)
     .all();
 
   const exists = columns.some(
-    columnInfo => columnInfo.name === column
+    item => item.name === column
   );
 
   if (!exists) {
     db.exec(
-      `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`
+      `ALTER TABLE ${table}
+       ADD COLUMN ${column} ${definition}`
     );
   }
 }
 
-addColumnIfMissing("tips", "tierce", "TEXT");
-addColumnIfMissing("tips", "quarte", "TEXT");
-addColumnIfMissing("tips", "quinte", "TEXT");
-
-/* =========================================================
-   CRÉATION / MISE À JOUR ADMIN
-========================================================= */
-
-const adminHash = bcrypt.hashSync(
-  ADMIN_PASSWORD,
-  12
+addColumnIfMissing(
+  "tips",
+  "tierce",
+  "TEXT"
 );
 
-const existingAdmin = db
-  .prepare(
-    `
-    SELECT id
-    FROM users
-    WHERE email = ?
-    `
-  )
-  .get(ADMIN_EMAIL);
+addColumnIfMissing(
+  "tips",
+  "quarte",
+  "TEXT"
+);
+
+addColumnIfMissing(
+  "tips",
+  "quinte",
+  "TEXT"
+);
+
+/* =========================================================
+   ADMIN
+========================================================= */
+
+const adminHash =
+  bcrypt.hashSync(
+    ADMIN_PASSWORD,
+    12
+  );
+
+const existingAdmin =
+  db
+    .prepare(
+      `
+      SELECT id
+      FROM users
+      WHERE email = ?
+      `
+    )
+    .get(ADMIN_EMAIL);
 
 if (!existingAdmin) {
 
@@ -159,11 +167,6 @@ if (!existingAdmin) {
     "admin"
   );
 
-  console.log(
-    "Compte administrateur créé : " +
-    ADMIN_EMAIL
-  );
-
 } else {
 
   db.prepare(
@@ -178,26 +181,22 @@ if (!existingAdmin) {
     adminHash,
     ADMIN_EMAIL
   );
-
-  console.log(
-    "Compte administrateur vérifié : " +
-    ADMIN_EMAIL
-  );
 }
 
 /* =========================================================
    PRONOSTIC PAR DÉFAUT
 ========================================================= */
 
-const existingTip = db
-  .prepare(
-    `
-    SELECT id
-    FROM tips
-    LIMIT 1
-    `
-  )
-  .get();
+const existingTip =
+  db
+    .prepare(
+      `
+      SELECT id
+      FROM tips
+      LIMIT 1
+      `
+    )
+    .get();
 
 if (!existingTip) {
 
@@ -236,11 +235,7 @@ if (!existingTip) {
     "5 – 8 – 12 – 3 – 7 – 10",
     "5 – 8 – 12 – 3 – 7 – 10 – 2",
     "5 – 8 – 12 – 3 – 7 – 10 – 2 – 11",
-    "Pronostic de démonstration à remplacer par votre sélection du jour."
-  );
-
-  console.log(
-    "Pronostic de démonstration créé."
+    "Pronostic de démonstration à remplacer."
   );
 }
 
@@ -254,26 +249,29 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  express.json()
+);
 
-/*
-   Sur Render, le site fonctionne normalement en HTTPS.
-   proxy = 1 permet à Express de comprendre correctement
-   le HTTPS derrière le proxy de Render.
-*/
-
-app.set("trust proxy", 1);
+app.set(
+  "trust proxy",
+  1
+);
 
 app.use(
   session({
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      secure:
+        process.env.NODE_ENV ===
+        "production",
+      maxAge:
+        7 * 24 * 60 * 60 * 1000
     }
   })
 );
@@ -283,55 +281,6 @@ app.use(
     path.join(__dirname, "public")
   )
 );
-
-/* =========================================================
-   AUTHENTIFICATION
-========================================================= */
-
-function auth(req, res, next) {
-
-  if (!req.session.userId) {
-    return res.redirect("/connexion");
-  }
-
-  next();
-}
-
-function admin(req, res, next) {
-
-  if (
-    !req.session.userId ||
-    req.session.role !== "admin"
-  ) {
-
-    return res.status(403).send(
-      page(
-        req,
-        "Accès refusé",
-        `
-        <div class="formbox">
-
-          <h1>🔒 Accès refusé</h1>
-
-          <p>
-            Accès administrateur requis.
-          </p>
-
-          <a
-            class="btn"
-            href="/connexion"
-          >
-            Se connecter
-          </a>
-
-        </div>
-        `
-      )
-    );
-  }
-
-  next();
-}
 
 /* =========================================================
    UTILITAIRES
@@ -347,72 +296,52 @@ function safe(value) {
     .replace(/'/g, "&#039;");
 }
 
-function isVip(user) {
+function formatDate(value) {
 
-  return (
-    user &&
-    user.vip_until &&
-    new Date(user.vip_until) > new Date()
-  );
-}
-
-function formatDate(dateString) {
-
-  if (!dateString) {
+  if (!value) {
     return "";
   }
 
-  const date = new Date(
-    dateString + "T00:00:00"
-  );
-
-  return date.toLocaleDateString(
-    "fr-FR",
-    {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    }
+  return new Date(
+    value + "T00:00:00"
+  ).toLocaleDateString(
+    "fr-FR"
   );
 }
 
 function todayString() {
 
-  const now = new Date();
+  return new Date()
+    .toISOString()
+    .slice(0, 10);
+}
 
-  const year =
-    now.getFullYear();
+function isVip(user) {
 
-  const month =
-    String(
-      now.getMonth() + 1
-    ).padStart(2, "0");
-
-  const day =
-    String(
-      now.getDate()
-    ).padStart(2, "0");
-
-  return (
-    year +
-    "-" +
-    month +
-    "-" +
-    day
+  return !!(
+    user &&
+    user.vip_until &&
+    new Date(user.vip_until) >
+      new Date()
   );
 }
 
 /* =========================================================
-   TEMPLATE PRINCIPAL
+   PAGE PRINCIPALE
 ========================================================= */
 
-function page(req, title, body) {
+function page(
+  req,
+  title,
+  body
+) {
 
   const logged =
     !!req.session.userId;
 
   const isAdmin =
-    req.session.role === "admin";
+    req.session.role ===
+    "admin";
 
   return `
 <!doctype html>
@@ -429,7 +358,9 @@ function page(req, title, body) {
 >
 
 <title>
-${safe(title)} — Spécial Quinté Français
+${safe(title)}
+—
+Spécial Quinté Français
 </title>
 
 <style>
@@ -495,12 +426,23 @@ footer {
   color: #666;
 }
 
-.hero {
+.hero,
+.card,
+.formbox,
+.plan,
+.archive-card,
+.archive-header {
   background: white;
-  padding: 30px;
+  padding: 22px;
   border-radius: 14px;
   margin-bottom: 20px;
+  box-shadow:
+    0 3px 15px rgba(0,0,0,.08);
+}
+
+.hero {
   text-align: center;
+  padding: 30px;
 }
 
 .race {
@@ -525,18 +467,9 @@ footer {
   gap: 20px;
 }
 
-.card,
-.formbox,
-.plan {
-  background: white;
-  padding: 22px;
-  border-radius: 12px;
-  box-shadow:
-    0 3px 15px rgba(0,0,0,.08);
-  margin-bottom: 20px;
-}
-
-.picks {
+.picks,
+.archive-picks,
+.bet-grid {
   display: grid;
   grid-template-columns:
     repeat(auto-fit,minmax(180px,1fr));
@@ -544,54 +477,31 @@ footer {
   margin: 20px 0;
 }
 
-.picks b {
+.picks b,
+.archive-pick,
+.bet-card {
   padding: 18px;
   border-radius: 10px;
   background: #eef2ff;
   text-align: center;
 }
 
-.picks span {
+.picks span,
+.bet-card .horses,
+.archive-pick span {
   display: block;
-  font-size: 21px;
+  font-size: 20px;
+  font-weight: bold;
   margin-top: 8px;
-}
-
-.bet-grid {
-  display: grid;
-  grid-template-columns:
-    repeat(auto-fit,minmax(220px,1fr));
-  gap: 15px;
-  margin-top: 20px;
-}
-
-.bet-card {
-  background: #eef2ff;
-  padding: 20px;
-  border-radius: 12px;
-  text-align: center;
 }
 
 .bet-card h3 {
   margin-top: 0;
 }
 
-.bet-card .horses {
-  display: block;
-  font-size: 21px;
-  font-weight: bold;
-  margin-top: 10px;
-}
-
-.notice {
-  background: #fff7ed;
-  padding: 15px;
-  border-radius: 8px;
-}
-
 .btn {
   display: inline-block;
-  border: none;
+  border: 0;
   background: #111827;
   color: white;
   text-decoration: none;
@@ -600,8 +510,12 @@ footer {
   cursor: pointer;
 }
 
-.btn:hover {
-  opacity: .88;
+.success {
+  background: #166534;
+}
+
+.danger {
+  background: #b91c1c;
 }
 
 label {
@@ -639,48 +553,23 @@ textarea {
   margin-top: 10px;
 }
 
-.danger {
-  background: #b91c1c;
-}
-
-.success {
-  background: #166534;
-}
-
+.notice,
 .vip {
-  background: #fef3c7;
+  background: #fff7ed;
   padding: 15px;
   border-radius: 8px;
 }
 
 .locked {
+  text-align: center;
   background: #f3f4f6;
   padding: 25px;
   border-radius: 12px;
-  text-align: center;
   margin-top: 20px;
-}
-
-.locked h3 {
-  margin-top: 0;
 }
 
 .lock-icon {
   font-size: 40px;
-  margin-bottom: 10px;
-}
-
-/* =========================================================
-   ARCHIVES
-========================================================= */
-
-.archive-card {
-  background: white;
-  padding: 22px;
-  border-radius: 14px;
-  margin-bottom: 20px;
-  box-shadow:
-    0 3px 15px rgba(0,0,0,.08);
 }
 
 .archive-date {
@@ -690,7 +579,6 @@ textarea {
 }
 
 .archive-title {
-  margin-top: 0;
   color: #111827;
 }
 
@@ -701,74 +589,17 @@ textarea {
   margin: 12px 0;
 }
 
-.archive-picks {
-  display: grid;
-  grid-template-columns:
-    repeat(auto-fit,minmax(150px,1fr));
-  gap: 10px;
-  margin-top: 15px;
-}
-
-.archive-pick {
-  background: #eef2ff;
-  padding: 14px;
-  border-radius: 8px;
-  text-align: center;
-}
-
-.archive-pick strong {
-  display: block;
-  margin-bottom: 7px;
-}
-
-.archive-pick span {
-  font-size: 20px;
-  font-weight: bold;
-}
-
-.archive-notes {
-  background: #fff7ed;
-  padding: 14px;
-  border-radius: 8px;
-  margin-top: 15px;
-}
-
-.archive-header {
-  text-align: center;
-  background: white;
-  padding: 25px;
-  border-radius: 14px;
-  margin-bottom: 20px;
-}
-
-/* =========================================================
-   MOBILE
-========================================================= */
-
 @media(max-width:600px) {
 
   main {
     padding: 15px 10px;
   }
 
-  header {
-    padding: 15px 12px;
-  }
-
   .hero {
     padding: 20px 15px;
   }
 
-  .card,
-  .formbox,
-  .archive-card {
-    padding: 17px;
-  }
-
-  .picks {
-    grid-template-columns: 1fr 1fr;
-  }
-
+  .picks,
   .archive-picks {
     grid-template-columns: 1fr 1fr;
   }
@@ -878,35 +709,56 @@ ${body}
 }
 
 /* =========================================================
-   ACCUEIL
+   AUTH
 ========================================================= */
 
-app.get("/", (req, res) => {
+function auth(
+  req,
+  res,
+  next
+) {
 
-  const t =
-    db
-      .prepare(
-        `
-        SELECT *
-        FROM tips
-        ORDER BY race_date DESC, id DESC
-        LIMIT 1
-        `
-      )
-      .get();
+  if (!req.session.userId) {
+    return res.redirect(
+      "/connexion"
+    );
+  }
 
-  if (!t) {
+  next();
+}
 
-    return res.send(
+function adminOnly(
+  req,
+  res,
+  next
+) {
+
+  if (
+    !req.session.userId ||
+    req.session.role !== "admin"
+  ) {
+
+    return res.status(403).send(
       page(
         req,
-        "Accueil",
+        "Accès refusé",
         `
-        <div class="card">
+        <div class="formbox">
 
           <h1>
-            Aucun pronostic disponible.
+            🔒 Accès refusé
           </h1>
+
+          <p>
+            Accès administrateur requis.
+          </p>
+
+          <a
+            class="btn"
+            href="/connexion"
+          >
+            Se connecter
+          </a>
 
         </div>
         `
@@ -914,11 +766,185 @@ app.get("/", (req, res) => {
     );
   }
 
-  res.send(
-    page(
-      req,
-      "Accueil",
+  next();
+}
+
+/* =========================================================
+   AFFICHAGE PRONOSTIC
+========================================================= */
+
+function tipFields(t) {
+
+  return `
+
+<div class="picks">
+
+<b>
+
+BASES
+
+<span>
+${safe(t.bases)}
+</span>
+
+</b>
+
+<b>
+
+SECONDES CHANCES
+
+<span>
+${safe(t.second_chances)}
+</span>
+
+</b>
+
+<b>
+
+OUTSIDERS
+
+<span>
+${safe(t.outsiders)}
+</span>
+
+</b>
+
+<b>
+
+REMPLAÇANT
+
+<span>
+${safe(t.replacement || "-")}
+</span>
+
+</b>
+
+</div>
+
+<h2>
+🎯 Jeux du jour
+</h2>
+
+<div class="bet-grid">
+
+<div class="bet-card">
+
+<h3>
+🏇 TIERCE
+</h3>
+
+<p>
+6 chevaux
+</p>
+
+<span class="horses">
+${safe(t.tierce || "-")}
+</span>
+
+</div>
+
+<div class="bet-card">
+
+<h3>
+🏇 QUARTE
+</h3>
+
+<p>
+7 chevaux
+</p>
+
+<span class="horses">
+${safe(t.quarte || "-")}
+</span>
+
+</div>
+
+<div class="bet-card">
+
+<h3>
+🏇 QUINTE
+</h3>
+
+<p>
+8 chevaux
+</p>
+
+<span class="horses">
+${safe(t.quinte || "-")}
+</span>
+
+</div>
+
+</div>
+
+${
+  t.notes
+    ? `
+      <div class="notice">
+
+      📝
+      <b>
+      Commentaire :
+      </b>
+
+      <br><br>
+
+      ${safe(t.notes)}
+
+      </div>
       `
+    : ""
+}
+
+`;
+}
+
+/* =========================================================
+   ACCUEIL
+   IMPORTANT :
+   AUCUN NUMÉRO DU PRONOSTIC N'EST AFFICHÉ ICI.
+========================================================= */
+
+app.get(
+  "/",
+  (req, res) => {
+
+    const t =
+      db
+        .prepare(
+          `
+          SELECT *
+          FROM tips
+          ORDER BY race_date DESC, id DESC
+          LIMIT 1
+          `
+        )
+        .get();
+
+    if (!t) {
+
+      return res.send(
+        page(
+          req,
+          "Accueil",
+          `
+          <div class="card">
+
+            <h1>
+              Aucun pronostic disponible.
+            </h1>
+
+          </div>
+          `
+        )
+      );
+    }
+
+    res.send(
+      page(
+        req,
+        "Accueil",
+        `
 
 <section class="hero">
 
@@ -941,13 +967,22 @@ ${safe(t.title)}
 </strong>
 
 <span>
+
 ${formatDate(t.race_date)}
+
 •
+
 ${safe(t.start_time)}
+
 •
-${safe(t.runners)} partants
+
+${safe(t.runners)}
+partants
+
 •
+
 ${safe(t.distance)}
+
 </span>
 
 </div>
@@ -963,7 +998,8 @@ Pronostic réservé aux membres VIP
 </h3>
 
 <p>
-La sélection complète est protégée.
+La sélection complète n'est pas affichée
+sur l'accueil.
 </p>
 
 <a
@@ -1007,7 +1043,8 @@ Voir les abonnements
 </h2>
 
 <p>
-Retrouvez les anciens pronostics.
+Les anciennes sélections restent
+accessibles publiquement.
 </p>
 
 <a
@@ -1047,32 +1084,34 @@ S'abonner
 </div>
 
 `
-    )
-  );
-});
+      )
+    );
+  }
+);
 
 /* =========================================================
-   ARCHIVES
+   ARCHIVES PUBLIQUES
 ========================================================= */
 
-app.get("/archives", (req, res) => {
+app.get(
+  "/archives",
+  (req, res) => {
 
-  const today =
-    todayString();
+    const rows =
+      db
+        .prepare(
+          `
+          SELECT *
+          FROM tips
+          WHERE race_date < ?
+          ORDER BY race_date DESC, id DESC
+          `
+        )
+        .all(
+          todayString()
+        );
 
-  const archives =
-    db
-      .prepare(
-        `
-        SELECT *
-        FROM tips
-        WHERE race_date < ?
-        ORDER BY race_date DESC, id DESC
-        `
-      )
-      .all(today);
-
-  let content = `
+    let html = `
 
 <div class="archive-header">
 
@@ -1081,37 +1120,37 @@ app.get("/archives", (req, res) => {
 </h1>
 
 <p>
-Retrouvez les anciens pronostics de
-<b>Spécial Quinté Français</b>.
+Les archives sont visibles par tous les visiteurs.
 </p>
 
 </div>
 
 `;
 
-  if (!archives.length) {
+    if (!rows.length) {
 
-    content += `
-    <div class="card">
+      html += `
 
-      <h2>
-        Aucune archive pour le moment
-      </h2>
+<div class="card">
 
-      <p>
-        Les anciens pronostics apparaîtront
-        automatiquement ici après leur date de course.
-      </p>
+<h2>
+Aucune archive pour le moment
+</h2>
 
-    </div>
-    `;
+<p>
+Les anciens pronostics apparaîtront
+automatiquement après leur date de course.
+</p>
 
-  } else {
+</div>
 
-    content += archives
-      .map(t => {
+`;
 
-        return `
+    } else {
+
+      html += rows
+        .map(
+          t => `
 
 <div class="archive-card">
 
@@ -1121,25 +1160,33 @@ Retrouvez les anciens pronostics de
 ${formatDate(t.race_date)}
 
 •
+
 🕐
 ${safe(t.start_time)}
 
 </div>
 
 <h2 class="archive-title">
+
 ${safe(t.title)}
+
 </h2>
 
 <div class="archive-info">
 
 🏇
-<b>${safe(t.course)}</b>
+<b>
+${safe(t.course)}
+</b>
 
 •
+
 ${safe(t.distance)}
 
 •
-${safe(t.runners)} partants
+
+${safe(t.runners)}
+partants
 
 </div>
 
@@ -1195,7 +1242,7 @@ ${safe(t.replacement || "-")}
 
 </div>
 
-<div style="margin-top:15px">
+<br>
 
 <a
 class="btn"
@@ -1206,26 +1253,24 @@ Voir le pronostic complet
 
 </div>
 
-</div>
+`
+        )
+        .join("");
+    }
 
-`;
-
-      })
-      .join("");
-
+    res.send(
+      page(
+        req,
+        "Archives",
+        html
+      )
+    );
   }
-
-  res.send(
-    page(
-      req,
-      "Archives",
-      content
-    )
-  );
-});
+);
 
 /* =========================================================
    DÉTAIL ARCHIVE
+   PUBLIC
 ========================================================= */
 
 app.get(
@@ -1241,7 +1286,9 @@ app.get(
           WHERE id = ?
           `
         )
-        .get(req.params.id);
+        .get(
+          req.params.id
+        );
 
     if (!t) {
 
@@ -1283,6 +1330,7 @@ app.get(
 ${formatDate(t.race_date)}
 
 •
+
 🕐
 ${safe(t.start_time)}
 
@@ -1295,6 +1343,7 @@ ${safe(t.title)}
 <div class="archive-info">
 
 🏇 Hippodrome :
+
 <b>
 ${safe(t.course)}
 </b>
@@ -1302,6 +1351,7 @@ ${safe(t.course)}
 <br><br>
 
 📏 Distance :
+
 <b>
 ${safe(t.distance)}
 </b>
@@ -1309,112 +1359,14 @@ ${safe(t.distance)}
 <br><br>
 
 🐎 Partants :
+
 <b>
 ${safe(t.runners)}
 </b>
 
 </div>
 
-<h2>
-🏇 Sélection
-</h2>
-
-<div class="archive-picks">
-
-<div class="archive-pick">
-<strong>BASES</strong>
-<span>${safe(t.bases)}</span>
-</div>
-
-<div class="archive-pick">
-<strong>SECONDES CHANCES</strong>
-<span>${safe(t.second_chances)}</span>
-</div>
-
-<div class="archive-pick">
-<strong>OUTSIDERS</strong>
-<span>${safe(t.outsiders)}</span>
-</div>
-
-<div class="archive-pick">
-<strong>REMPLAÇANT</strong>
-<span>${safe(t.replacement || "-")}</span>
-</div>
-
-</div>
-
-<h2>
-🎯 Jeux proposés
-</h2>
-
-<div class="bet-grid">
-
-<div class="bet-card">
-
-<h3>
-Tiercé
-</h3>
-
-<p>
-6 chevaux
-</p>
-
-<span class="horses">
-${safe(t.tierce || "-")}
-</span>
-
-</div>
-
-<div class="bet-card">
-
-<h3>
-Quarté
-</h3>
-
-<p>
-7 chevaux
-</p>
-
-<span class="horses">
-${safe(t.quarte || "-")}
-</span>
-
-</div>
-
-<div class="bet-card">
-
-<h3>
-Quinté
-</h3>
-
-<p>
-8 chevaux
-</p>
-
-<span class="horses">
-${safe(t.quinte || "-")}
-</span>
-
-</div>
-
-</div>
-
-${
-  t.notes
-    ? `
-      <div class="archive-notes">
-
-        📝
-        <b>Commentaire :</b>
-
-        <br><br>
-
-        ${safe(t.notes)}
-
-      </div>
-      `
-    : ""
-}
+${tipFields(t)}
 
 <br>
 
@@ -1540,15 +1492,11 @@ app.post(
           req,
           "Erreur",
           `
-          <div class="formbox">
+          <div class="card">
 
             <h1>
-              Erreur
-            </h1>
-
-            <p>
               Informations manquantes.
-            </p>
+            </h1>
 
           </div>
           `
@@ -1557,12 +1505,6 @@ app.post(
     }
 
     try {
-
-      const hash =
-        bcrypt.hashSync(
-          password,
-          12
-        );
 
       const info =
         db
@@ -1581,14 +1523,21 @@ app.post(
           )
           .run(
             name.trim(),
-            email.trim().toLowerCase(),
+            email
+              .trim()
+              .toLowerCase(),
             phone.trim(),
-            hash,
+            bcrypt.hashSync(
+              password,
+              12
+            ),
             "member"
           );
 
       req.session.userId =
-        Number(info.lastInsertRowid);
+        Number(
+          info.lastInsertRowid
+        );
 
       req.session.role =
         "member";
@@ -1599,35 +1548,31 @@ app.post(
 
     } catch (e) {
 
-      console.error(e);
-
       res.status(400).send(
         page(
           req,
           "Erreur",
           `
+          <div class="formbox">
 
-<div class="formbox">
+            <h1>
+              Erreur
+            </h1>
 
-<h1>
-Erreur
-</h1>
+            <p>
+              Cette adresse e-mail existe déjà
+              ou les informations sont invalides.
+            </p>
 
-<p>
-Cette adresse e-mail existe déjà
-ou les informations sont invalides.
-</p>
+            <a
+              class="btn"
+              href="/connexion"
+            >
+              Se connecter
+            </a>
 
-<a
-class="btn"
-href="/connexion"
->
-Se connecter
-</a>
-
-</div>
-
-`
+          </div>
+          `
         )
       );
     }
@@ -1685,7 +1630,6 @@ required
 
 <button
 class="btn"
-type="submit"
 >
 Se connecter
 </button>
@@ -1694,9 +1638,11 @@ Se connecter
 
 <p>
 Pas encore de compte ?
+
 <a href="/inscription">
 Créer un compte
 </a>
+
 </p>
 
 </div>
@@ -1723,7 +1669,7 @@ app.post(
         req.body.password || ""
       );
 
-    const u =
+    const user =
       db
         .prepare(
           `
@@ -1735,10 +1681,10 @@ app.post(
         .get(email);
 
     if (
-      !u ||
+      !user ||
       !bcrypt.compareSync(
         password,
-        u.password_hash
+        user.password_hash
       )
     ) {
 
@@ -1747,106 +1693,58 @@ app.post(
           req,
           "Connexion",
           `
+          <div class="formbox">
 
-<div class="formbox">
+            <h1>
+              ❌ Connexion refusée
+            </h1>
 
-<h1>
-❌ Connexion refusée
-</h1>
+            <p>
+              L'adresse e-mail ou le mot
+              de passe est incorrect.
+            </p>
 
-<p>
-L'adresse e-mail ou le mot de passe est incorrect.
-</p>
+            <a
+              class="btn"
+              href="/connexion"
+            >
+              Réessayer
+            </a>
 
-<a
-class="btn"
-href="/connexion"
->
-Réessayer
-</a>
-
-</div>
-
-`
+          </div>
+          `
         )
       );
     }
-
-    /*
-       On recrée une session propre après
-       authentification.
-    */
 
     req.session.regenerate(
       err => {
 
         if (err) {
-
-          console.error(
-            "Erreur session :",
-            err
-          );
-
           return res.status(500).send(
-            page(
-              req,
-              "Erreur",
-              `
-              <div class="card">
-
-                <h1>
-                  Erreur de session
-                </h1>
-
-                <p>
-                  Impossible d'ouvrir la session.
-                  Veuillez réessayer.
-                </p>
-
-                <a
-                  class="btn"
-                  href="/connexion"
-                >
-                  Réessayer
-                </a>
-
-              </div>
-              `
-            )
+            "Erreur de session."
           );
         }
 
         req.session.userId =
-          u.id;
+          user.id;
 
         req.session.role =
-          u.role;
+          user.role;
 
         req.session.save(
           saveError => {
 
             if (saveError) {
-
-              console.error(
-                "Erreur sauvegarde session :",
-                saveError
-              );
-
               return res.status(500).send(
-                "Erreur lors de la sauvegarde de la session."
-              );
-            }
-
-            if (
-              u.role === "admin"
-            ) {
-              return res.redirect(
-                "/admin"
+                "Erreur de sauvegarde de session."
               );
             }
 
             res.redirect(
-              "/compte"
+              user.role === "admin"
+                ? "/admin"
+                : "/compte"
             );
           }
         );
@@ -1864,12 +1762,7 @@ app.get(
   (req, res) => {
 
     req.session.destroy(
-      err => {
-
-        if (err) {
-          console.error(err);
-        }
-
+      () => {
         res.redirect("/");
       }
     );
@@ -1950,9 +1843,13 @@ Payer avec Orange Money
 </h2>
 
 <p>
-Après votre paiement, indiquez votre référence
-de transaction afin que l'administrateur puisse
-vérifier et activer votre accès.
+Après paiement, indiquez la référence
+de transaction.
+</p>
+
+<p>
+L'administrateur vérifiera puis
+activera votre accès.
 </p>
 
 </div>
@@ -2072,9 +1969,7 @@ Numéro Orange Money utilisé
 
 <input
 name="phone"
-value="${safe(
-  user.phone
-)}"
+value="${safe(user.phone)}"
 required
 >
 
@@ -2093,7 +1988,6 @@ required
 
 <button
 class="btn"
-type="submit"
 >
 Envoyer la demande
 </button>
@@ -2143,23 +2037,11 @@ app.post(
           req,
           "Erreur",
           `
-          <div class="formbox">
+          <div class="card">
 
             <h1>
               Informations manquantes
             </h1>
-
-            <p>
-              Veuillez renseigner le numéro
-              et la référence de transaction.
-            </p>
-
-            <a
-              class="btn"
-              href="/abonnement"
-            >
-              Retour
-            </a>
 
           </div>
           `
@@ -2200,12 +2082,12 @@ Demande reçue ✅
 </h1>
 
 <p>
-Votre demande de paiement a été enregistrée.
+Votre demande a été enregistrée.
 </p>
 
 <p>
-Après confirmation par l'administrateur,
-votre accès VIP sera activé.
+Après vérification, votre accès VIP
+sera activé.
 </p>
 
 <a
@@ -2232,7 +2114,7 @@ app.get(
   auth,
   (req, res) => {
 
-    const u =
+    const user =
       db
         .prepare(
           `
@@ -2245,15 +2127,14 @@ app.get(
           req.session.userId
         );
 
-    if (!u) {
+    if (!user) {
 
-      req.session.destroy(
-        () => res.redirect(
-          "/connexion"
-        )
+      return req.session.destroy(
+        () =>
+          res.redirect(
+            "/connexion"
+          )
       );
-
-      return;
     }
 
     const payments =
@@ -2266,10 +2147,7 @@ app.get(
           ORDER BY id DESC
           `
         )
-        .all(u.id);
-
-    const active =
-      isVip(u);
+        .all(user.id);
 
     res.send(
       page(
@@ -2280,64 +2158,55 @@ app.get(
 <div class="card">
 
 <h1>
-Bonjour ${safe(u.name)}
+Bonjour ${safe(user.name)}
 </h1>
 
 <p>
-${safe(u.email)}
+${safe(user.email)}
 •
-${safe(u.phone)}
+${safe(user.phone)}
 </p>
 
 <h2>
 Statut :
 ${
-  active
+  isVip(user)
     ? "🟢 VIP actif"
     : "⚪ Non abonné"
 }
 </h2>
 
 ${
-  active
+  isVip(user)
     ? `
+      <div class="vip">
 
-<div class="vip">
+      <p>
+      Votre accès VIP expire le :
+      <b>
+      ${new Date(
+        user.vip_until
+      ).toLocaleString("fr-FR")}
+      </b>
+      </p>
 
-<p>
+      <a
+      class="btn"
+      href="/pronostic"
+      >
+      Accéder au pronostic
+      </a>
 
-Votre accès VIP expire le :
-
-<b>
-${new Date(
-  u.vip_until
-).toLocaleString(
-  "fr-FR"
-)}
-</b>
-
-</p>
-
-<a
-class="btn"
-href="/pronostic"
->
-Accéder au pronostic
-</a>
-
-</div>
-
-`
+      </div>
+      `
     : `
-
-<a
-class="btn"
-href="/abonnement"
->
-Choisir un abonnement
-</a>
-
-`
+      <a
+      class="btn"
+      href="/abonnement"
+      >
+      Choisir un abonnement
+      </a>
+      `
 }
 
 <h2>
@@ -2358,7 +2227,8 @@ Commande #${p.id}
 
 <br>
 
-${p.amount_eur} €
+${p.amount_eur}
+€
 —
 ${safe(p.status)}
 
@@ -2395,7 +2265,7 @@ app.get(
   auth,
   (req, res) => {
 
-    const u =
+    const user =
       db
         .prepare(
           `
@@ -2409,9 +2279,13 @@ app.get(
         );
 
     if (
-      !isVip(u) &&
-      u.role !== "admin"
+      !user ||
+      (
+        user.role !== "admin" &&
+        !isVip(user)
+      )
     ) {
+
       return res.redirect(
         "/abonnement"
       );
@@ -2492,134 +2366,7 @@ partants
 
 </p>
 
-<div class="picks">
-
-<b>
-
-BASES
-
-<span>
-${safe(t.bases)}
-</span>
-
-</b>
-
-<b>
-
-SECONDES CHANCES
-
-<span>
-${safe(t.second_chances)}
-</span>
-
-</b>
-
-<b>
-
-OUTSIDERS
-
-<span>
-${safe(t.outsiders)}
-</span>
-
-</b>
-
-<b>
-
-REMPLAÇANT
-
-<span>
-${safe(
-  t.replacement || "-"
-)}
-</span>
-
-</b>
-
-</div>
-
-<h2>
-🎯 Jeux du jour
-</h2>
-
-<div class="bet-grid">
-
-<div class="bet-card">
-
-<h3>
-🏇 TIERCE
-</h3>
-
-<p>
-6 chevaux
-</p>
-
-<span class="horses">
-${safe(
-  t.tierce || "-"
-)}
-</span>
-
-</div>
-
-<div class="bet-card">
-
-<h3>
-🏇 QUARTE
-</h3>
-
-<p>
-7 chevaux
-</p>
-
-<span class="horses">
-${safe(
-  t.quarte || "-"
-)}
-</span>
-
-</div>
-
-<div class="bet-card">
-
-<h3>
-🏇 QUINTE
-</h3>
-
-<p>
-8 chevaux
-</p>
-
-<span class="horses">
-${safe(
-  t.quinte || "-"
-)}
-</span>
-
-</div>
-
-</div>
-
-${
-  t.notes
-    ? `
-
-<div class="notice">
-
-📝
-<b>
-Commentaire :
-</b>
-
-<br><br>
-
-${safe(t.notes)}
-
-</div>
-
-`
-    : ""
-}
+${tipFields(t)}
 
 </div>
 
@@ -2630,12 +2377,244 @@ ${safe(t.notes)}
 );
 
 /* =========================================================
-   ADMINISTRATION
+   FORMULAIRE PRONOSTIC ADMIN
+========================================================= */
+
+function tipForm(
+  t = {},
+  action = "/admin/tip/new"
+) {
+
+  return `
+
+<div class="formbox">
+
+<h1>
+${
+  t.id
+    ? "✏️ Modifier"
+    : "➕ Nouveau"
+}
+pronostic
+</h1>
+
+<form
+method="post"
+action="${action}"
+>
+
+<label>
+
+Date
+
+<input
+type="date"
+name="race_date"
+value="${safe(t.race_date)}"
+required
+>
+
+</label>
+
+<label>
+
+Titre
+
+<input
+name="title"
+value="${safe(t.title)}"
+placeholder="Quinté du jour — R1C1"
+required
+>
+
+</label>
+
+<label>
+
+Heure
+
+<input
+name="start_time"
+value="${safe(t.start_time)}"
+placeholder="13H50"
+required
+>
+
+</label>
+
+<label>
+
+Hippodrome
+
+<input
+name="course"
+value="${safe(t.course)}"
+placeholder="Deauville"
+required
+>
+
+</label>
+
+<label>
+
+Distance
+
+<input
+name="distance"
+value="${safe(t.distance)}"
+placeholder="2 400 M"
+required
+>
+
+</label>
+
+<label>
+
+Nombre de partants
+
+<input
+type="number"
+name="runners"
+min="1"
+value="${safe(t.runners || "")}"
+required
+>
+
+</label>
+
+<label>
+
+Bases
+
+<input
+name="bases"
+value="${safe(t.bases)}"
+required
+>
+
+</label>
+
+<label>
+
+Secondes chances
+
+<input
+name="second_chances"
+value="${safe(t.second_chances)}"
+required
+>
+
+</label>
+
+<label>
+
+Outsiders
+
+<input
+name="outsiders"
+value="${safe(t.outsiders)}"
+required
+>
+
+</label>
+
+<label>
+
+Remplaçant
+
+<input
+name="replacement"
+value="${safe(
+  t.replacement || ""
+)}"
+>
+
+</label>
+
+<hr>
+
+<h2>
+🎯 Jeux du jour
+</h2>
+
+<label>
+
+Tiercé — 6 chevaux
+
+<input
+name="tierce"
+value="${safe(
+  t.tierce || ""
+)}"
+required
+>
+
+</label>
+
+<label>
+
+Quarté — 7 chevaux
+
+<input
+name="quarte"
+value="${safe(
+  t.quarte || ""
+)}"
+required
+>
+
+</label>
+
+<label>
+
+Quinté — 8 chevaux
+
+<input
+name="quinte"
+value="${safe(
+  t.quinte || ""
+)}"
+required
+>
+
+</label>
+
+<label>
+
+Notes / commentaire
+
+<textarea
+name="notes"
+>${safe(
+  t.notes || ""
+)}</textarea>
+
+</label>
+
+<button
+class="btn success"
+>
+${
+  t.id
+    ? "Enregistrer les modifications"
+    : "Publier le pronostic"
+}
+</button>
+
+</form>
+
+</div>
+
+`;
+}
+
+/* =========================================================
+   ADMIN
 ========================================================= */
 
 app.get(
   "/admin",
-  admin,
+  adminOnly,
   (req, res) => {
 
     const users =
@@ -2695,13 +2674,7 @@ app.get(
 </h1>
 
 <p>
-
-Bienvenue dans l'espace administrateur du
-
-<b>
-Spécial Quinté Français
-</b>
-
+Bienvenue dans l'espace administrateur.
 </p>
 
 <h2>
@@ -2724,13 +2697,9 @@ ${
 <div class="row">
 
 <b>
-
 ${formatDate(t.race_date)}
-
 —
-
 ${safe(t.title)}
-
 </b>
 
 <br><br>
@@ -2756,7 +2725,7 @@ ${safe(t.replacement || "-")}
 <br><br>
 
 <b>
-Tiercé — 6 chevaux :
+Tiercé — 6 :
 </b>
 
 ${safe(t.tierce || "-")}
@@ -2764,7 +2733,7 @@ ${safe(t.tierce || "-")}
 <br>
 
 <b>
-Quarté — 7 chevaux :
+Quarté — 7 :
 </b>
 
 ${safe(t.quarte || "-")}
@@ -2772,7 +2741,7 @@ ${safe(t.quarte || "-")}
 <br>
 
 <b>
-Quinté — 8 chevaux :
+Quinté — 8 :
 </b>
 
 ${safe(t.quinte || "-")}
@@ -2789,7 +2758,6 @@ Modifier
 <form
 method="post"
 action="/admin/tip/delete"
-style="display:inline"
 >
 
 <input
@@ -2800,7 +2768,6 @@ value="${t.id}"
 
 <button
 class="btn danger"
-type="submit"
 onclick="return confirm('Supprimer ce pronostic ?')"
 >
 Supprimer
@@ -2815,11 +2782,7 @@ Supprimer
 `
         )
         .join("")
-    : `
-      <p>
-        Aucun pronostic.
-      </p>
-      `
+    : "<p>Aucun pronostic.</p>"
 }
 
 <h2>
@@ -2836,15 +2799,11 @@ ${
 
 <b>
 #${p.id}
-</b>
-
 —
-
 ${safe(p.name)}
-
 —
-
 ${p.amount_eur} €
+</b>
 
 <br>
 
@@ -2861,7 +2820,6 @@ ${safe(
 <br>
 
 Statut :
-
 <b>
 ${safe(p.status)}
 </b>
@@ -2873,7 +2831,6 @@ ${
 <form
 method="post"
 action="/admin/confirm"
-style="margin-top:10px"
 >
 
 <input
@@ -2884,7 +2841,6 @@ value="${p.id}"
 
 <button
 class="btn success"
-type="submit"
 >
 Confirmer le paiement
 </button>
@@ -2960,240 +2916,67 @@ ${
 
 app.get(
   "/admin/tip/new",
-  admin,
+  adminOnly,
   (req, res) => {
 
     res.send(
       page(
         req,
         "Nouveau pronostic",
-        `
-
-<div class="formbox">
-
-<h1>
-➕ Nouveau pronostic
-</h1>
-
-<form
-method="post"
-action="/admin/tip/new"
->
-
-<label>
-
-Date de la course
-
-<input
-type="date"
-name="race_date"
-required
->
-
-</label>
-
-<label>
-
-Titre
-
-<input
-name="title"
-placeholder="Quinté du jour — R1C1"
-required
->
-
-</label>
-
-<label>
-
-Heure
-
-<input
-name="start_time"
-placeholder="13H50"
-required
->
-
-</label>
-
-<label>
-
-Hippodrome
-
-<input
-name="course"
-placeholder="Deauville"
-required
->
-
-</label>
-
-<label>
-
-Distance
-
-<input
-name="distance"
-placeholder="2 400 M"
-required
->
-
-</label>
-
-<label>
-
-Nombre de partants
-
-<input
-type="number"
-name="runners"
-min="1"
-required
->
-
-</label>
-
-<label>
-
-Bases
-
-<input
-name="bases"
-placeholder="5 – 8 – 12"
-required
->
-
-</label>
-
-<label>
-
-Secondes chances
-
-<input
-name="second_chances"
-placeholder="3 – 7 – 10"
-required
->
-
-</label>
-
-<label>
-
-Outsiders
-
-<input
-name="outsiders"
-placeholder="2 – 11 – 14"
-required
->
-
-</label>
-
-<label>
-
-Remplaçant
-
-<input
-name="replacement"
-placeholder="6"
->
-
-</label>
-
-<hr>
-
-<h2>
-🎯 Jeux du jour
-</h2>
-
-<label>
-
-Tiercé — 6 chevaux
-
-<input
-name="tierce"
-placeholder="5 – 8 – 12 – 3 – 7 – 10"
-required
->
-
-</label>
-
-<label>
-
-Quarté — 7 chevaux
-
-<input
-name="quarte"
-placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2"
-required
->
-
-</label>
-
-<label>
-
-Quinté — 8 chevaux
-
-<input
-name="quinte"
-placeholder="5 – 8 – 12 – 3 – 7 – 10 – 2 – 11"
-required
->
-
-</label>
-
-<label>
-
-Notes / commentaire
-
-<textarea
-name="notes"
-></textarea>
-
-</label>
-
-<button
-class="btn success"
-type="submit"
->
-Publier le pronostic
-</button>
-
-</form>
-
-</div>
-
-`
+        tipForm()
       )
     );
   }
 );
 
+function validTip(body) {
+
+  const runners =
+    Number(body.runners);
+
+  return (
+    body.race_date &&
+    body.title &&
+    body.start_time &&
+    body.course &&
+    body.distance &&
+    Number.isInteger(runners) &&
+    runners > 0 &&
+    body.bases &&
+    body.second_chances &&
+    body.outsiders &&
+    body.tierce &&
+    body.quarte &&
+    body.quinte
+  );
+}
+
+function tipValues(body) {
+
+  return [
+    body.race_date,
+    body.title,
+    body.start_time,
+    body.course,
+    body.distance,
+    Number(body.runners),
+    body.bases,
+    body.second_chances,
+    body.outsiders,
+    body.replacement || "",
+    body.tierce,
+    body.quarte,
+    body.quinte,
+    body.notes || ""
+  ];
+}
+
 app.post(
   "/admin/tip/new",
-  admin,
+  adminOnly,
   (req, res) => {
 
-    const runners =
-      Number(
-        req.body.runners
-      );
-
-    if (
-      !req.body.race_date ||
-      !req.body.title ||
-      !req.body.start_time ||
-      !req.body.course ||
-      !req.body.distance ||
-      !Number.isInteger(runners) ||
-      runners < 1 ||
-      !req.body.bases ||
-      !req.body.second_chances ||
-      !req.body.outsiders ||
-      !req.body.tierce ||
-      !req.body.quarte ||
-      !req.body.quinte
-    ) {
+    if (!validTip(req.body)) {
 
       return res.status(400).send(
         page(
@@ -3205,10 +2988,6 @@ app.post(
             <h1>
               ❌ Données invalides
             </h1>
-
-            <p>
-              Veuillez remplir tous les champs obligatoires.
-            </p>
 
             <a
               class="btn"
@@ -3245,20 +3024,7 @@ app.post(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
     ).run(
-      req.body.race_date,
-      req.body.title,
-      req.body.start_time,
-      req.body.course,
-      req.body.distance,
-      runners,
-      req.body.bases,
-      req.body.second_chances,
-      req.body.outsiders,
-      req.body.replacement || "",
-      req.body.tierce,
-      req.body.quarte,
-      req.body.quinte,
-      req.body.notes || ""
+      ...tipValues(req.body)
     );
 
     res.redirect(
@@ -3273,7 +3039,7 @@ app.post(
 
 app.get(
   "/admin/tip/edit/:id",
-  admin,
+  adminOnly,
   (req, res) => {
 
     const t =
@@ -3302,13 +3068,6 @@ app.get(
               Pronostic introuvable
             </h1>
 
-            <a
-              class="btn"
-              href="/admin"
-            >
-              Retour Admin
-            </a>
-
           </div>
           `
         )
@@ -3319,233 +3078,10 @@ app.get(
       page(
         req,
         "Modifier pronostic",
-        `
-
-<div class="formbox">
-
-<h1>
-✏️ Modifier le pronostic
-</h1>
-
-<form
-method="post"
-action="/admin/tip/edit/${t.id}"
->
-
-<label>
-
-Date
-
-<input
-type="date"
-name="race_date"
-value="${safe(
-  t.race_date
-)}"
-required
->
-
-</label>
-
-<label>
-
-Titre
-
-<input
-name="title"
-value="${safe(
-  t.title
-)}"
-required
->
-
-</label>
-
-<label>
-
-Heure
-
-<input
-name="start_time"
-value="${safe(
-  t.start_time
-)}"
-required
->
-
-</label>
-
-<label>
-
-Hippodrome
-
-<input
-name="course"
-value="${safe(
-  t.course
-)}"
-required
->
-
-</label>
-
-<label>
-
-Distance
-
-<input
-name="distance"
-value="${safe(
-  t.distance
-)}"
-required
->
-
-</label>
-
-<label>
-
-Partants
-
-<input
-type="number"
-name="runners"
-min="1"
-value="${safe(
-  t.runners
-)}"
-required
->
-
-</label>
-
-<label>
-
-Bases
-
-<input
-name="bases"
-value="${safe(
-  t.bases
-)}"
-required
->
-
-</label>
-
-<label>
-
-Secondes chances
-
-<input
-name="second_chances"
-value="${safe(
-  t.second_chances
-)}"
-required
->
-
-</label>
-
-<label>
-
-Outsiders
-
-<input
-name="outsiders"
-value="${safe(
-  t.outsiders
-)}"
-required
->
-
-</label>
-
-<label>
-
-Remplaçant
-
-<input
-name="replacement"
-value="${safe(
-  t.replacement || ""
-)}"
->
-
-</label>
-
-<hr>
-
-<h2>
-🎯 Jeux du jour
-</h2>
-
-<label>
-
-Tiercé — 6 chevaux
-
-<input
-name="tierce"
-value="${safe(
-  t.tierce || ""
-)}"
-required
->
-
-</label>
-
-<label>
-
-Quarté — 7 chevaux
-
-<input
-name="quarte"
-value="${safe(
-  t.quarte || ""
-)}"
-required
->
-
-</label>
-
-<label>
-
-Quinté — 8 chevaux
-
-<input
-name="quinte"
-value="${safe(
-  t.quinte || ""
-)}"
-required
->
-
-</label>
-
-<label>
-
-Notes
-
-<textarea
-name="notes"
->${safe(
-  t.notes || ""
-)}</textarea>
-
-</label>
-
-<button
-class="btn success"
-type="submit"
->
-Enregistrer les modifications
-</button>
-
-</form>
-
-</div>
-
-`
+        tipForm(
+          t,
+          `/admin/tip/edit/${t.id}`
+        )
       )
     );
   }
@@ -3553,29 +3089,10 @@ Enregistrer les modifications
 
 app.post(
   "/admin/tip/edit/:id",
-  admin,
+  adminOnly,
   (req, res) => {
 
-    const runners =
-      Number(
-        req.body.runners
-      );
-
-    if (
-      !req.body.race_date ||
-      !req.body.title ||
-      !req.body.start_time ||
-      !req.body.course ||
-      !req.body.distance ||
-      !Number.isInteger(runners) ||
-      runners < 1 ||
-      !req.body.bases ||
-      !req.body.second_chances ||
-      !req.body.outsiders ||
-      !req.body.tierce ||
-      !req.body.quarte ||
-      !req.body.quinte
-    ) {
+    if (!validTip(req.body)) {
 
       return res.status(400).send(
         page(
@@ -3587,10 +3104,6 @@ app.post(
             <h1>
               ❌ Données invalides
             </h1>
-
-            <p>
-              Veuillez remplir tous les champs obligatoires.
-            </p>
 
             <a
               class="btn"
@@ -3626,20 +3139,7 @@ app.post(
       WHERE id = ?
       `
     ).run(
-      req.body.race_date,
-      req.body.title,
-      req.body.start_time,
-      req.body.course,
-      req.body.distance,
-      runners,
-      req.body.bases,
-      req.body.second_chances,
-      req.body.outsiders,
-      req.body.replacement || "",
-      req.body.tierce,
-      req.body.quarte,
-      req.body.quinte,
-      req.body.notes || "",
+      ...tipValues(req.body),
       req.params.id
     );
 
@@ -3655,7 +3155,7 @@ app.post(
 
 app.post(
   "/admin/tip/delete",
-  admin,
+  adminOnly,
   (req, res) => {
 
     const id =
@@ -3666,12 +3166,15 @@ app.post(
     ) {
 
       return res.status(400).send(
-        "Identifiant de pronostic invalide."
+        "Identifiant invalide."
       );
     }
 
     db.prepare(
-      "DELETE FROM tips WHERE id = ?"
+      `
+      DELETE FROM tips
+      WHERE id = ?
+      `
     ).run(id);
 
     res.redirect(
@@ -3686,7 +3189,7 @@ app.post(
 
 app.post(
   "/admin/confirm",
-  admin,
+  adminOnly,
   (req, res) => {
 
     const payment =
@@ -3705,33 +3208,24 @@ app.post(
     if (!payment) {
 
       return res.status(404).send(
-        page(
-          req,
-          "Erreur",
-          `
-          <div class="card">
-
-            <h1>
-              Paiement introuvable
-            </h1>
-
-            <a
-              class="btn"
-              href="/admin"
-            >
-              Retour Admin
-            </a>
-
-          </div>
-          `
-        )
+        "Paiement introuvable."
       );
     }
 
-    const days =
-      payment.plan === "30"
-        ? 30
-        : 15;
+    /*
+       Évite de confirmer deux fois
+       le même paiement.
+    */
+
+    if (
+      payment.status ===
+      "confirmed"
+    ) {
+
+      return res.redirect(
+        "/admin"
+      );
+    }
 
     const user =
       db
@@ -3753,53 +3247,73 @@ app.post(
       );
     }
 
-    /*
-       Si l'utilisateur possède déjà un VIP actif,
-       on prolonge à partir de sa date d'expiration
-       au lieu de perdre les jours restants.
-    */
-
     let baseDate =
       new Date();
 
+    /*
+       Si le VIP est déjà actif,
+       on ajoute les jours à la date
+       d'expiration existante.
+    */
+
     if (
       user.vip_until &&
-      new Date(user.vip_until) > baseDate
+      new Date(user.vip_until) >
+        baseDate
     ) {
+
       baseDate =
         new Date(
           user.vip_until
         );
     }
 
-    const until =
+    const days =
+      payment.plan === "30"
+        ? 30
+        : 15;
+
+    const vipUntil =
       new Date(
         baseDate.getTime() +
-        days * 86400000
+        days *
+          24 *
+          60 *
+          60 *
+          1000
       ).toISOString();
 
-    db.prepare(
-      `
-      UPDATE payments
-      SET
-        status = 'confirmed',
-        confirmed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-      `
-    ).run(
-      payment.id
-    );
+    const transaction =
+      db.transaction(
+        () => {
 
-    db.prepare(
-      `
-      UPDATE users
-      SET vip_until = ?
-      WHERE id = ?
-      `
-    ).run(
-      until,
-      payment.user_id
-    );
+          db.prepare(
+            `
+            UPDATE payments
+            SET
+              status = 'confirmed',
+              confirmed_at =
+                CURRENT_TIMESTAMP
+            WHERE id = ?
+            `
+          ).run(
+            payment.id
+          );
+
+          db.prepare(
+            `
+            UPDATE users
+            SET vip_until = ?
+            WHERE id = ?
+            `
+          ).run(
+            vipUntil,
+            payment.user_id
+          );
+        }
+      );
+
+    transaction();
 
     res.redirect(
       "/admin"
@@ -3808,7 +3322,7 @@ app.post(
 );
 
 /* =========================================================
-   ROUTE 404
+   404
 ========================================================= */
 
 app.use(
@@ -3819,45 +3333,46 @@ app.use(
         req,
         "Page introuvable",
         `
+        <div class="card">
 
-<div class="card">
+          <h1>
+            404 — Page introuvable
+          </h1>
 
-<h1>
-404 — Page introuvable
-</h1>
+          <a
+            class="btn"
+            href="/"
+          >
+            Retour à l'accueil
+          </a>
 
-<p>
-La page que vous recherchez n'existe pas.
-</p>
-
-<a
-class="btn"
-href="/"
->
-Retour à l'accueil
-</a>
-
-</div>
-
-`
+        </div>
+        `
       )
     );
   }
 );
 
 /* =========================================================
-   GESTION DES ERREURS
+   ERREURS
 ========================================================= */
 
 app.use(
-  (err, req, res, next) => {
+  (
+    err,
+    req,
+    res,
+    next
+  ) => {
 
     console.error(
       "Erreur serveur :",
       err
     );
 
-    if (res.headersSent) {
+    if (
+      res.headersSent
+    ) {
       return next(err);
     }
 
@@ -3866,28 +3381,26 @@ app.use(
         req,
         "Erreur serveur",
         `
+        <div class="card">
 
-<div class="card">
+          <h1>
+            ❌ Erreur serveur
+          </h1>
 
-<h1>
-❌ Erreur serveur
-</h1>
+          <p>
+            Une erreur inattendue
+            est survenue.
+          </p>
 
-<p>
-Une erreur inattendue est survenue.
-Veuillez réessayer.
-</p>
+          <a
+            class="btn"
+            href="/"
+          >
+            Accueil
+          </a>
 
-<a
-class="btn"
-href="/"
->
-Retour à l'accueil
-</a>
-
-</div>
-
-`
+        </div>
+        `
       )
     );
   }
@@ -3930,6 +3443,14 @@ app.listen(
 
     console.log(
       "Quinté : 8 chevaux"
+    );
+
+    console.log(
+      "Accueil : pronostic masqué"
+    );
+
+    console.log(
+      "Archives : publiques"
     );
 
     console.log(
